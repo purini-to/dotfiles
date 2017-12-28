@@ -9,5 +9,8 @@ do
   [[ ${f} = ".gitignore" ]] && continue
   ln -snfv ${CURRENTT_DIR}/${f} ${HOME}/${f}
 done
+
+ln -snfv ${CURRENTT_DIR}/bin ${HOME}/bin
+
 echo $(tput setaf 2)Deploy dotfiles complete!. ✔︎$(tput sgr0)
 
