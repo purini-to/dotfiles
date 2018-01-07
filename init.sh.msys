@@ -1,0 +1,23 @@
+#!/bin/bash
+
+echo "Update pacman repository."
+pacman -Syu
+
+echo "Install git."
+pacman -S git
+
+echo "Install vim."
+pacman -S vim
+
+echo "Install zsh."
+pacman -S zsh
+
+echo "Install tmux."
+pacman -S tmux
+
+echo "Install openssh."
+pacman -S openssh
+
+echo "Install man."
+pacman -S man
+
