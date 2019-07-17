@@ -1,18 +1,26 @@
 #!/bin/bash
 
-if [ ! -e ${HOME}/.vim/bundle/Vundle.vim ]; then
-  git clone https://github.com/VundleVim/Vundle.vim.git ~/.vim/bundle/Vundle.vim
-fi
+brew cask install visual-studio-code
+brew install neovim
+brew cask install google-chrome
+brew cask install alacritty
+brew cask install docker
+brew install docker
+brew cask install slack
+brew cask install clipy
+brew install fish
+brew install fzf
+brew install ghq
+brew install bat
+brew install ripgrep
 
-if [ ! -e ${HOME}/.oh-my-zsh ]; then
-  sh -c "$(curl -fsSL https://raw.githubusercontent.com/robbyrussell/oh-my-zsh/master/tools/install.sh)"
-fi
+fisher add 0rax/fish-bd
+fisher add decors/fish-ghq
+fisher add jethrokuan/fzf
+fisher add jethrokuan/z
+fisher add matchai/spacefish
 
-if [ ! -e ${HOME}/.tmux/plugins/tpm ]; then
-  git clone https://github.com/tmux-plugins/tpm ~/.tmux/plugins/tpm
-fi
-
-if [ `uname | grep MSYS` ]; then
-  sh ./init.sh.msys
-fi
+git config --system alias.s status
+git config --system alias.d diff
+git config --system alias.c commit
 
