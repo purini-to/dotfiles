@@ -13,6 +13,7 @@ brew install fzf
 brew install ghq
 brew install bat
 brew install ripgrep
+brew install hub
 
 fisher add 0rax/fish-bd
 fisher add decors/fish-ghq

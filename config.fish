@@ -14,6 +14,8 @@ set -U FZF_LEGACY_KEYBINDINGS 0
 
 set -g GHQ_SELECTOR fzf
 
+eval (hub alias -s)
+
 alias g git
 alias d docker
 
