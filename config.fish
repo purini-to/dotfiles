@@ -28,4 +28,5 @@ alias gd "git diff"
 alias ga "git add ."
 alias pull "git pull"
 alias push "git push"
+alias see "hub browse"
 
