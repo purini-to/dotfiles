@@ -24,4 +24,7 @@ fisher add matchai/spacefish
 git config --system alias.s status
 git config --system alias.d diff
 git config --system alias.c commit
+git config --global core.editor nvim
+
+echo "Font install: https://github.com/edihbrandon/RictyDiminished"
 
