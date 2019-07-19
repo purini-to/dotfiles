@@ -17,7 +17,9 @@ set -g GHQ_SELECTOR fzf
 eval (hub alias -s)
 
 alias g git
+
 alias d docker
+alias dc docker-compose
 
 alias vi nvim
 alias vim nvim
@@ -29,4 +31,6 @@ alias ga "git add ."
 alias pull "git pull"
 alias push "git push"
 alias see "hub browse"
+
+alias nw "open -n /Applications/Alacritty.app"
 
