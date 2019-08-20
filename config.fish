@@ -3,6 +3,8 @@ set -x LANG ja_JP.UTF-8
 set -x GOPATH $HOME/.go
 set -U fish_user_paths $GOPATH/bin $fish_user_paths
 
+set -x DOCKER_BUILDKIT 1
+
 set -U fish_user_paths $HOME/.nodebrew/current/bin $fish_user_paths
 
 set -U fish_user_paths $HOME/.pyenv/shims $fish_user_paths

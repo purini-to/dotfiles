@@ -14,6 +14,7 @@ brew install ghq
 brew install bat
 brew install ripgrep
 brew install hub
+brew install gibo
 
 fisher add 0rax/fish-bd
 fisher add decors/fish-ghq
