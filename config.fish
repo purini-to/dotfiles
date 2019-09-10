@@ -28,10 +28,14 @@ alias vim nvim
 
 alias gs "git status"
 alias gc "git commit"
+alias gch "git checkout"
+alias gchm "git checkout master"
 alias gd "git diff"
 alias ga "git add ."
 alias pull "git pull"
 alias push "git push"
+alias greset "git clean -fd && git reset --hard && git status"
+
 alias see "hub browse"
 
 alias nw "open -n /Applications/Alacritty.app"

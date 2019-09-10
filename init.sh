@@ -3,7 +3,8 @@
 brew cask install visual-studio-code
 brew install neovim
 brew cask install google-chrome
-brew cask install alacritty
+# brew cask install alacritty
+brew cask install iterm2
 brew cask install docker
 brew install docker
 brew cask install slack
