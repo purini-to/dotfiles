@@ -38,5 +38,8 @@ alias greset "git clean -fd && git reset --hard && git status"
 
 alias see "hub browse"
 
-alias nw "open -n /Applications/Alacritty.app"
+alias k "kubectl"
+alias kg "kubectl get"
+alias kfar "kubectl api-resources | grep"
+alias kfav "kubectl api-versions  | grep"
 
