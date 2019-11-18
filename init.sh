@@ -16,6 +16,14 @@ brew install bat
 brew install ripgrep
 brew install hub
 brew install gibo
+brew install jq
+brew install vegeta
+brew install rs/tap/jaggr
+brew install rs/tap/jplot
+# brew install kubectx
+# brew install derailed/k9s/k9s
+# brew install kubernetes-helm
+# brew install stern
 
 fisher add 0rax/fish-bd
 fisher add decors/fish-ghq
