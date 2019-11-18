@@ -16,6 +16,10 @@ brew install bat
 brew install ripgrep
 brew install hub
 brew install gibo
+# brew install rs/tap/jaggr
+# brew install rs/tap/jplot
+# brew install vegeta
+# brew install stern
 
 fisher add 0rax/fish-bd
 fisher add decors/fish-ghq
