@@ -20,10 +20,17 @@ brew install jq
 brew install vegeta
 brew install rs/tap/jaggr
 brew install rs/tap/jplot
+
+# ----- kubernetes -----
 # brew install kubectx
 # brew install derailed/k9s/k9s
 # brew install kubernetes-helm
 # brew install stern
+# ----------------------
+
+# ----- gRPC -----
+# brew install protobuf
+# ----------------
 
 fisher add 0rax/fish-bd
 fisher add decors/fish-ghq
