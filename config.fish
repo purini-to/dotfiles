@@ -23,6 +23,8 @@ alias g git
 alias d docker
 alias dc docker-compose
 
+alias ls eza
+
 # alias vi nvim
 # alias vim nvim
 
