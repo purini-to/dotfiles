@@ -25,6 +25,8 @@ alias dc docker-compose
 
 alias ls eza
 
+alias cat gat
+
 # alias vi nvim
 # alias vim nvim
 
