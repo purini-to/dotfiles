@@ -47,4 +47,6 @@ git config --system alias.c commit
 git config --global core.editor nvim
 
 # echo "Font install: https://github.com/edihbrandon/RictyDiminished"
-
+echo "□□□□□□□ Install extension after open VS Code (press Cmd + Shift + P) □□□□□□□"
+echo "ext install esbenp.prettier-vscode"
+echo "□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□"
