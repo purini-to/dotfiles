@@ -1,7 +1,7 @@
 #!/bin/bash
 
 brew cask install visual-studio-code
-brew install neovim
+# brew install neovim
 brew cask install google-chrome
 # brew cask install alacritty
 brew install --cask docker
@@ -12,7 +12,7 @@ brew install ghq
 brew install ripgrep
 brew install hub
 brew install gibo
-brew install jq
+# brew install jq
 
 # ----- terminal -----
 brew cask install iterm2
@@ -46,5 +46,5 @@ git config --system alias.d diff
 git config --system alias.c commit
 git config --global core.editor nvim
 
-echo "Font install: https://github.com/edihbrandon/RictyDiminished"
+# echo "Font install: https://github.com/edihbrandon/RictyDiminished"
 
