@@ -12,6 +12,7 @@ brew install ghq
 brew install ripgrep
 brew install hub
 brew install gibo
+brew install eza
 # brew install jq
 
 # ----- terminal -----
