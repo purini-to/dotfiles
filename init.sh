@@ -1,16 +1,14 @@
 #!/bin/bash
 
 brew cask install visual-studio-code
-brew install neovim
+# brew install neovim
 brew cask install google-chrome
 # brew cask install alacritty
 brew cask install iterm2
 brew cask install slack
 brew cask install clipy
-brew install fish
 brew install fzf
 brew install ghq
-brew install bat
 brew install ripgrep
 brew install hub
 brew install gibo
@@ -46,5 +44,7 @@ git config --system alias.d diff
 git config --system alias.c commit
 git config --global core.editor nvim
 
-echo "Font install: https://github.com/edihbrandon/RictyDiminished"
-
+# echo "Font install: https://github.com/edihbrandon/RictyDiminished"
+echo "□□□□□□□ Install extension after open VS Code (press Cmd + Shift + P) □□□□□□□"
+echo "ext install esbenp.prettier-vscode"
+echo "□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□□"
