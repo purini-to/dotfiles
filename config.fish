@@ -1,4 +1,11 @@
 set -x LANG ja_JP.UTF-8
+if status is-interactive
+    # Commands to run in interactive sessions can go here
+    
+    # PATH
+    set PATH /opt/homebrew/bin /opt/homebrew/sbin $PATH # <-追加
+end
+
 set -e fish_user_paths
 
 set -x DOCKER_BUILDKIT 1
@@ -9,7 +16,7 @@ set -U FZF_LEGACY_KEYBINDINGS 0
 
 set -g GHQ_SELECTOR fzf
 
-eval (hub alias -s)
+# eval (hub alias -s)
 
 alias d docker
 alias dc docker-compose
@@ -33,7 +40,7 @@ alias main "git checkout main"
 
 alias see "hub browse"
 
-starship init fish | source
+eval (starship init fish)
 
 # ghq + fzf でリポジトリ一覧を絞り込んで cd する関数
 function ghq_fzf_cd

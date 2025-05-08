@@ -28,6 +28,6 @@
     },
     "editor.formatOnSave": true,
     "editor.defaultFormatter": "esbenp.prettier-vscode",
-    "terminal.integrated.fontFamily": "Hack Nerd Font Mono",
-    "editor.fontFamily": "Hack Nerd Font Mono"
+    "terminal.integrated.fontFamily": "HackGen Console NF",
+    "editor.fontFamily": "HackGen Console NF"
 }

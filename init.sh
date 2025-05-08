@@ -4,6 +4,7 @@ brew install --cask visual-studio-code
 brew install --cask google-chrome
 brew install --cask slack
 brew install --cask clipy
+brew install --cask alacritty
 # brew install --cask iterm2
 # brew install --cask alacritty
 brew install fish
@@ -32,6 +33,8 @@ sudo git config --system alias.s status
 sudo git config --system alias.d diff
 sudo git config --system alias.c commit
 git config --global core.editor "code --wait"
+
+brew install --cask font-hackgen-nerd
 
 # echo "Font install: https://github.com/edihbrandon/RictyDiminished"
 echo "□□□□□□□ Install extension after open VS Code (press Cmd + Shift + P) □□□□□□□"
