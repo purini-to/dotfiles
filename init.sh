@@ -5,8 +5,6 @@ brew install neovim
 brew cask install google-chrome
 # brew cask install alacritty
 brew cask install iterm2
-brew cask install docker
-brew install docker
 brew cask install slack
 brew cask install clipy
 brew install fish
@@ -17,9 +15,9 @@ brew install ripgrep
 brew install hub
 brew install gibo
 brew install jq
-brew install vegeta
-brew install rs/tap/jaggr
-brew install rs/tap/jplot
+
+brew install starship
+echo 'starship init fish | source' >> ~/.config/fish/config.fish
 
 # ----- kubernetes -----
 # brew install kubectx
@@ -32,11 +30,16 @@ brew install rs/tap/jplot
 # brew install protobuf
 # ----------------
 
-fisher add 0rax/fish-bd
-fisher add decors/fish-ghq
-fisher add jethrokuan/fzf
-fisher add jethrokuan/z
-fisher add matchai/spacefish
+echo "$(which fish)" | sudo tee -a /etc/shells
+chsh -s "$(which fish)"
+
+curl -sL https://raw.githubusercontent.com/jorgebucaran/fisher/main/functions/fisher.fish | source && fisher install jorgebucaran/fisher
+
+fisher install 0rax/fish-bd
+fisher install decors/fish-ghq
+fisher install jethrokuan/fzf
+fisher install jethrokuan/z
+fisher install PatrickF1/fzf.fish
 
 git config --system alias.s status
 git config --system alias.d diff
