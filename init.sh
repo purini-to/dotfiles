@@ -6,6 +6,7 @@ brew install --cask slack
 brew install --cask clipy
 # brew install --cask iterm2
 # brew install --cask alacritty
+brew install fish
 brew install neovim
 brew install fzf
 brew install ghq
