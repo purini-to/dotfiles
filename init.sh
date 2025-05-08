@@ -7,6 +7,7 @@ brew install --cask clipy
 # brew install --cask iterm2
 # brew install --cask alacritty
 brew install fish
+brew install fisher
 brew install fzf
 brew install ghq
 brew install ripgrep
@@ -18,12 +19,9 @@ brew install gibo
 brew install jq
 
 brew install starship
-echo 'starship init fish | source' >> ~/.config/fish/config.fish
 
 echo "$(which fish)" | sudo tee -a /etc/shells
 chsh -s "$(which fish)"
-
-curl -sL https://raw.githubusercontent.com/jorgebucaran/fisher/main/functions/fisher.fish | source && fisher install jorgebucaran/fisher
 
 fisher install icezyclon/zoxide.fish
 fisher install decors/fish-ghq

@@ -17,8 +17,6 @@ alias ls "eza --icons --git"
 alias ll "ls -l --sort=modified --reverse"
 alias cat bat
 alias grep rg
-alias vi nvim
-alias vim nvim
 
 alias g git
 alias gs "git status"
@@ -34,3 +32,18 @@ alias master "git checkout master"
 alias main "git checkout main"
 
 alias see "hub browse"
+
+starship init fish | source
+
+# ghq + fzf でリポジトリ一覧を絞り込んで cd する関数
+function ghq_fzf_cd
+    # ghq list でリポジトリ一覧を取得して fzf で選択
+    set -l repo (ghq list | fzf --height 60% --reverse --border)
+    # 選択があれば cd
+    if test -n "$repo"
+        cd (ghq root)/$repo
+    end
+end
+
+# CTRL+g で上の関数を呼び出し
+bind \cg ghq_fzf_cd
