@@ -1,15 +1,18 @@
 #!/bin/bash
 
-brew cask install visual-studio-code
-# brew install neovim
-brew cask install google-chrome
-# brew cask install alacritty
-brew cask install iterm2
-brew cask install slack
-brew cask install clipy
+brew install --cask visual-studio-code
+brew install --cask google-chrome
+brew install --cask slack
+brew install --cask clipy
+# brew install --cask iterm2
+# brew install --cask alacritty
+brew install neovim
 brew install fzf
 brew install ghq
 brew install ripgrep
+brew install eza
+brew install bat
+brew install zoxide
 brew install hub
 brew install gibo
 brew install jq
@@ -17,26 +20,13 @@ brew install jq
 brew install starship
 echo 'starship init fish | source' >> ~/.config/fish/config.fish
 
-# ----- kubernetes -----
-# brew install kubectx
-# brew install derailed/k9s/k9s
-# brew install kubernetes-helm
-# brew install stern
-# ----------------------
-
-# ----- gRPC -----
-# brew install protobuf
-# ----------------
-
 echo "$(which fish)" | sudo tee -a /etc/shells
 chsh -s "$(which fish)"
 
 curl -sL https://raw.githubusercontent.com/jorgebucaran/fisher/main/functions/fisher.fish | source && fisher install jorgebucaran/fisher
 
-fisher install 0rax/fish-bd
+fisher install icezyclon/zoxide.fish
 fisher install decors/fish-ghq
-fisher install jethrokuan/fzf
-fisher install jethrokuan/z
 fisher install PatrickF1/fzf.fish
 
 git config --system alias.s status
