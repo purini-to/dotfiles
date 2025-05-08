@@ -33,7 +33,7 @@ fisher install PatrickF1/fzf.fish
 git config --system alias.s status
 git config --system alias.d diff
 git config --system alias.c commit
-git config --global core.editor nvim
+git config --global core.editor "code --wait"
 
 # echo "Font install: https://github.com/edihbrandon/RictyDiminished"
 echo "□□□□□□□ Install extension after open VS Code (press Cmd + Shift + P) □□□□□□□"
