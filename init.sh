@@ -7,7 +7,6 @@ brew install --cask clipy
 # brew install --cask iterm2
 # brew install --cask alacritty
 brew install fish
-brew install neovim
 brew install fzf
 brew install ghq
 brew install ripgrep
@@ -30,9 +29,9 @@ fisher install icezyclon/zoxide.fish
 fisher install decors/fish-ghq
 fisher install PatrickF1/fzf.fish
 
-git config --system alias.s status
-git config --system alias.d diff
-git config --system alias.c commit
+sudo git config --system alias.s status
+sudo git config --system alias.d diff
+sudo git config --system alias.c commit
 git config --global core.editor "code --wait"
 
 # echo "Font install: https://github.com/edihbrandon/RictyDiminished"
