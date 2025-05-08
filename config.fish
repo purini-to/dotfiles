@@ -24,6 +24,7 @@ alias ls "eza --icons --git"
 alias ll "ls -l --sort=modified --reverse"
 alias cat bat
 alias grep rg
+alias cd z
 
 alias g git
 alias gs "git status"
@@ -40,7 +41,8 @@ alias main "git checkout main"
 
 alias see "hub browse"
 
-eval (starship init fish)
+starship init fish | source
+zoxide init fish | source
 
 # ghq + fzf でリポジトリ一覧を絞り込んで cd する関数
 function ghq_fzf_cd
