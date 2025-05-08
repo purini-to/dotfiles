@@ -36,6 +36,8 @@ git config --global core.editor "code --wait"
 
 brew install --cask font-hackgen-nerd
 
+brew install --cask avast-security
+
 # echo "Font install: https://github.com/edihbrandon/RictyDiminished"
 echo "□□□□□□□ Install extension after open VS Code (press Cmd + P) □□□□□□□"
 echo "ext install esbenp.prettier-vscode"
