@@ -5,6 +5,7 @@ brew install --cask google-chrome
 brew install --cask slack
 brew install --cask clipy
 brew install --cask alacritty
+brew install --cask google-japanese-ime
 # brew install --cask iterm2
 brew install fish
 brew install fisher
