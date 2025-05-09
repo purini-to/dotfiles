@@ -33,6 +33,9 @@ sudo git config --system alias.s status
 sudo git config --system alias.d diff
 sudo git config --system alias.c commit
 git config --global core.editor "code --wait"
+git config --global color.ui true
+git config --global fetch.prune true
+git config --global rerere.enabled true
 
 brew install --cask font-hackgen-nerd
 
