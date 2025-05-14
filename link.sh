@@ -9,7 +9,7 @@ mkdir -p ${HOME}/.config/fish
 ln -snfv ${CURRENTT_DIR}/config.fish ${HOME}/.config/fish/config.fish
 
 mkdir -p ${HOME}/.config/nvim
-ln -snfv ${CURRENTT_DIR}/init.vim ${HOME}/.config/nvim/init.vim
+ln -snfv ${CURRENTT_DIR}/init.lua ${HOME}/.config/nvim/init.lua
 
 ln -snfv ${CURRENTT_DIR}/starship.toml ${HOME}/.config/starship.toml
 
