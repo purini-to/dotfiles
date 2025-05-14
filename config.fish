@@ -47,7 +47,7 @@ zoxide init fish | source
 # ghq + fzf でリポジトリ一覧を絞り込んで cd する関数
 function ghq_fzf_cd
     # ghq list でリポジトリ一覧を取得して fzf で選択
-    set -l repo (ghq list | fzf --height 60% --reverse --border)
+    set -l repo (ghq list | fzf --reverse --border --preview "bat --color=always --style=plain --line-range :100 (ghq root)/{}/README.md")
     # 選択があれば cd
     if test -n "$repo"
         cd (ghq root)/$repo
