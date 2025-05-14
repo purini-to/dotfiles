@@ -26,7 +26,6 @@ opt.list           = true                -- タブや改行を可視化
 opt.diffopt        = 'vertical'          -- diffは縦分割
 opt.cursorline     = true                -- カーソル行をハイライト
 opt.showmatch      = true                -- 対応する括弧をハイライト
-opt.guioptions:append('R')               -- GUI右クリックメニュー？
 
 -- true color対応＆ターミナル設定
 opt.termguicolors = true                  -- 24bitカラー有効

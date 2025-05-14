@@ -25,6 +25,7 @@ alias ll "ls -l --sort=modified --reverse"
 alias cat bat
 alias grep rg
 alias cd z
+alias vim nvim
 
 alias g git
 alias gs "git status"
