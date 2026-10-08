@@ -11,6 +11,8 @@ brew install fish
 brew install fisher
 brew install fzf
 brew install neovim
+brew install fd
+brew install tree-sitter-cli
 brew install ghq
 brew install ripgrep
 brew install eza

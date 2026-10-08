@@ -1,86 +1,314 @@
--- init.lua
-
--- Bootstrap lazy.nvim
-local lazypath = vim.fn.stdpath("data") .. "/lazy/lazy.nvim"
-if not (vim.uv or vim.loop).fs_stat(lazypath) then
-  local lazyrepo = "https://github.com/folke/lazy.nvim.git"
-  local out = vim.fn.system({ "git", "clone", "--filter=blob:none", "--branch=stable", lazyrepo, lazypath })
-  if vim.v.shell_error ~= 0 then
-    vim.api.nvim_echo({
-      { "Failed to clone lazy.nvim:\n", "ErrorMsg" },
-      { out, "WarningMsg" },
-      { "\nPress any key to exit..." },
-    }, true, {})
-    vim.fn.getchar()
-    os.exit(1)
-  end
+-- Kickstart.nvim ベース (vim.pack / Neovim 0.12+)
+-- https://github.com/nvim-lua/kickstart.nvim/blob/edc6ed3e41bfd1f7786b3fa6fe0b5d35b5e095bc/init.lua
+-- 学習用コメントを省略し、既存の配色・日本語設定・キーマップを維持。
+if vim.fn.has 'nvim-0.12' == 0 then
+  error 'Neovim 0.12+ is required. Run: brew upgrade neovim'
 end
-vim.opt.rtp:prepend(lazypath)
 
--- Make sure to setup `mapleader` and `maplocalleader` before
--- loading lazy.nvim so that mappings are correct.
--- This is also a good place to setup other settings (vim.opt)
-vim.g.mapleader = " "
-vim.g.maplocalleader = "\\"
+vim.loader.enable()
+vim.g.mapleader = ' '
+vim.g.maplocalleader = '\\'
+vim.g.have_nerd_font = false -- ターミナルでNerd Fontを選択したらtrue
 
--- Setup lazy.nvim
-require("lazy").setup({
-  spec = {
-    -- add your plugins here
-    { "catppuccin/nvim", name = "catppuccin", priority = 1000 }
+-- オプション
+local opt = vim.opt
+opt.number = true
+opt.mouse = 'a'
+opt.showmode = false
+vim.schedule(function() opt.clipboard = 'unnamed' end)
+opt.breakindent = true
+opt.undofile = true
+opt.ignorecase = true
+opt.smartcase = true
+opt.signcolumn = 'yes'
+opt.updatetime = 250
+opt.timeoutlen = 300
+opt.splitright = true
+opt.splitbelow = true
+opt.list = true
+opt.listchars = { tab = '> ', trail = '.', nbsp = '_' } -- ambiwidth=doubleでも1セルの記号
+opt.inccommand = 'split'
+opt.cursorline = true
+opt.scrolloff = 10
+opt.confirm = true
+opt.autoindent = true
+opt.smartindent = true
+opt.tabstop = 2
+opt.shiftwidth = 2
+opt.expandtab = true
+opt.hlsearch = true
+opt.wrapscan = true
+opt.fileformats = { 'unix', 'dos', 'mac' }
+opt.fileencodings = { 'ucs-bom', 'utf-8', 'euc-jp', 'cp932' }
+opt.ambiwidth = 'double'
+opt.swapfile = false
+opt.visualbell = true
+opt.diffopt:append 'vertical'
+opt.showmatch = true
+opt.termguicolors = true
+
+-- キーマップ・診断
+local km = vim.keymap.set
+km('n', '<Esc><Esc>', '<cmd>nohlsearch<CR>')
+km('n', 'j', 'gj')
+km('n', 'k', 'gk')
+km('i', 'jj', '<Esc>', { silent = true })
+km('i', 'っj', '<Esc>', { silent = true })
+km('t', '<Esc><Esc>', '<C-\\><C-n>', { desc = 'Exit terminal mode' })
+for key, direction in pairs { h = 'h', j = 'j', k = 'k', l = 'l' } do
+  km('n', '<C-' .. key .. '>', '<C-w><C-' .. direction .. '>', { desc = 'Move focus ' .. direction })
+end
+vim.diagnostic.config {
+  update_in_insert = false,
+  severity_sort = true,
+  float = { border = 'rounded', source = 'if_many' },
+  underline = { severity = { min = vim.diagnostic.severity.WARN } },
+  virtual_text = true,
+  virtual_lines = false,
+  jump = {
+    on_jump = function(_, bufnr)
+      vim.diagnostic.open_float { bufnr = bufnr, scope = 'cursor', focus = false }
+    end,
   },
-  -- Configure any other settings here. See the documentation for more details.
-  -- colorscheme that will be used when installing plugins.
-  install = { colorscheme = { "habamax" } },
-  -- automatically check for plugin updates
-  checker = { enabled = true },
+}
+km('n', '<leader>q', vim.diagnostic.setloclist, { desc = 'Open diagnostic [Q]uickfix list' })
+vim.api.nvim_create_autocmd('TextYankPost', {
+  group = vim.api.nvim_create_augroup('kickstart-highlight-yank', { clear = true }),
+  callback = function() vim.hl.on_yank() end,
 })
 
+-- vim.pack: :lua vim.pack.update() で更新 (:writeで適用、:quitで中止)
+local function gh(repo) return 'https://github.com/' .. repo end
+vim.api.nvim_create_autocmd('PackChanged', {
+  group = vim.api.nvim_create_augroup('kickstart-pack-build', { clear = true }),
+  callback = function(ev)
+    if ev.data.kind ~= 'install' and ev.data.kind ~= 'update' then return end
+    local name = ev.data.spec.name
+    local cmd
+    if name == 'telescope-fzf-native.nvim' and vim.fn.executable 'make' == 1 then
+      cmd = { 'make' }
+    elseif name == 'LuaSnip' and vim.fn.has 'win32' ~= 1 and vim.fn.executable 'make' == 1 then
+      cmd = { 'make', 'install_jsregexp' }
+    elseif name == 'nvim-treesitter' then
+      if not ev.data.active then vim.cmd.packadd 'nvim-treesitter' end
+      vim.cmd 'TSUpdate'
+    end
+    if cmd then
+      local result = vim.system(cmd, { cwd = ev.data.path }):wait()
+      if result.code ~= 0 then
+        vim.notify(('Build failed for %s:\n%s\n%s'):format(name, result.stderr or '', result.stdout or ''), vim.log.levels.ERROR)
+      end
+    end
+  end,
+})
 
--- コマンド系
-vim.cmd('syntax on')  -- シンタックスハイライト有効
+-- UI・Git
+vim.pack.add {
+  gh 'NMAC427/guess-indent.nvim',
+  gh 'lewis6991/gitsigns.nvim',
+  gh 'folke/which-key.nvim',
+  { src = gh 'catppuccin/nvim', name = 'catppuccin' },
+  gh 'nvim-lua/plenary.nvim',
+  gh 'folke/todo-comments.nvim',
+  gh 'nvim-mini/mini.nvim',
+}
+require('guess-indent').setup {}
+local gitsigns = require 'gitsigns'
+gitsigns.setup {
+  signs = {
+    add = { text = '+' }, change = { text = '~' }, delete = { text = '_' },
+    topdelete = { text = '‾' }, changedelete = { text = '~' },
+  },
+  on_attach = function(bufnr)
+    local function map(mode, key, action, desc)
+      km(mode, key, action, { buffer = bufnr, desc = 'Git: ' .. desc })
+    end
+    for key, direction in pairs { [']c'] = 'next', ['[c'] = 'prev' } do
+      map('n', key, function()
+        if vim.wo.diff then vim.cmd.normal { key, bang = true } else gitsigns.nav_hunk(direction) end
+      end, direction .. ' change')
+    end
+    map('v', '<leader>hs', function() gitsigns.stage_hunk { vim.fn.line '.', vim.fn.line 'v' } end, 'stage hunk')
+    map('v', '<leader>hr', function() gitsigns.reset_hunk { vim.fn.line '.', vim.fn.line 'v' } end, 'reset hunk')
+    for key, action in pairs {
+      hs = 'stage_hunk', hr = 'reset_hunk', hS = 'stage_buffer', hR = 'reset_buffer',
+      hp = 'preview_hunk', hi = 'preview_hunk_inline', hd = 'diffthis',
+      tb = 'toggle_current_line_blame', tw = 'toggle_word_diff',
+    } do
+      map('n', '<leader>' .. key, gitsigns[action], action)
+    end
+    map('n', '<leader>hb', function() gitsigns.blame_line { full = true } end, 'blame line')
+    map('n', '<leader>hD', function() gitsigns.diffthis '~' end, 'diff last commit')
+    map('n', '<leader>hQ', function() gitsigns.setqflist 'all' end, 'all hunks quickfix')
+    map('n', '<leader>hq', gitsigns.setqflist, 'buffer hunks quickfix')
+    map({ 'o', 'x' }, 'ih', gitsigns.select_hunk, 'inside hunk')
+  end,
+}
+require('which-key').setup {
+  delay = 0,
+  icons = { mappings = vim.g.have_nerd_font },
+  spec = {
+    { '<leader>s', group = '[S]earch', mode = { 'n', 'v' } },
+    { '<leader>t', group = '[T]oggle' },
+    { '<leader>h', group = 'Git [H]unk', mode = { 'n', 'v' } },
+    { 'gr', group = 'LSP Actions' },
+  },
+}
+require('catppuccin').setup { flavour = 'macchiato' }
+vim.cmd.colorscheme 'catppuccin-macchiato'
+require('todo-comments').setup {
+  signs = false,
+  keywords = { -- signs=falseでもsign_defineされるため、全角幅のアイコンは使わない
+    FIX = { icon = 'F' }, TODO = { icon = 'T' }, HACK = { icon = 'H' },
+    WARN = { icon = 'W' }, PERF = { icon = 'P' }, NOTE = { icon = 'N' }, TEST = { icon = 'T' },
+  },
+}
+if vim.g.have_nerd_font then
+  require('mini.icons').setup()
+  MiniIcons.mock_nvim_web_devicons()
+end
+require('mini.ai').setup { mappings = { around_next = 'aa', inside_next = 'ii' }, n_lines = 500 }
+require('mini.surround').setup()
+local statusline = require 'mini.statusline'
+statusline.setup { use_icons = vim.g.have_nerd_font }
+statusline.section_location = function() return '%2l:%-2v' end
 
-vim.cmd.colorscheme "catppuccin-macchiato"
+-- Telescope: ファイル・全文・ヘルプ検索
+local telescope_plugins = { gh 'nvim-telescope/telescope.nvim', gh 'nvim-telescope/telescope-ui-select.nvim' }
+if vim.fn.executable 'make' == 1 then table.insert(telescope_plugins, gh 'nvim-telescope/telescope-fzf-native.nvim') end
+vim.pack.add(telescope_plugins)
+require('telescope').setup { extensions = { ['ui-select'] = { require('telescope.themes').get_dropdown() } } }
+pcall(require('telescope').load_extension, 'fzf')
+pcall(require('telescope').load_extension, 'ui-select')
+local builtin = require 'telescope.builtin'
+for key, picker in pairs {
+  sh = 'help_tags', sk = 'keymaps', sf = 'find_files', ss = 'builtin', sg = 'live_grep',
+  sd = 'diagnostics', sr = 'resume', ['s.'] = 'oldfiles', sc = 'commands', ['<leader>'] = 'buffers',
+} do
+  km('n', '<leader>' .. key, builtin[picker], { desc = 'Search: ' .. picker })
+end
+km({ 'n', 'v' }, '<leader>sw', builtin.grep_string, { desc = '[S]earch current [W]ord' })
+km('n', '<leader>/', function()
+  builtin.current_buffer_fuzzy_find(require('telescope.themes').get_dropdown { winblend = 10, previewer = false })
+end, { desc = '[/] Search current buffer' })
+km('n', '<leader>s/', function()
+  builtin.live_grep { grep_open_files = true, prompt_title = 'Live Grep in Open Files' }
+end, { desc = '[S]earch [/] in open files' })
+km('n', '<leader>sn', function()
+  builtin.find_files { cwd = vim.fn.stdpath 'config', follow = true }
+end, { desc = '[S]earch [N]eovim files' })
 
--- オプション設定
-local opt = vim.opt
+-- LSP: 必要な言語サーバーをserversに追加 (:Masonで状態確認)
+vim.pack.add {
+  gh 'j-hui/fidget.nvim', gh 'neovim/nvim-lspconfig', gh 'mason-org/mason.nvim',
+  gh 'mason-org/mason-lspconfig.nvim', gh 'WhoIsSethDaniel/mason-tool-installer.nvim',
+}
+require('fidget').setup {}
+vim.api.nvim_create_autocmd('LspAttach', {
+  group = vim.api.nvim_create_augroup('kickstart-lsp-attach', { clear = true }),
+  callback = function(event)
+    local function map(keys, action, desc, mode)
+      km(mode or 'n', keys, action, { buffer = event.buf, desc = 'LSP: ' .. desc })
+    end
+    for key, picker in pairs {
+      grr = 'lsp_references', gri = 'lsp_implementations', grd = 'lsp_definitions',
+      gO = 'lsp_document_symbols', gW = 'lsp_dynamic_workspace_symbols', grt = 'lsp_type_definitions',
+    } do
+      map(key, builtin[picker], picker)
+    end
+    map('grn', vim.lsp.buf.rename, 'Rename')
+    map('gra', vim.lsp.buf.code_action, 'Code action', { 'n', 'x' })
+    map('grD', vim.lsp.buf.declaration, 'Declaration')
+    local client = vim.lsp.get_client_by_id(event.data.client_id)
+    if client and client:supports_method('textDocument/documentHighlight', event.buf) then
+      local group = vim.api.nvim_create_augroup('kickstart-lsp-highlight', { clear = false })
+      vim.api.nvim_create_autocmd({ 'CursorHold', 'CursorHoldI' }, { buffer = event.buf, group = group, callback = vim.lsp.buf.document_highlight })
+      vim.api.nvim_create_autocmd({ 'CursorMoved', 'CursorMovedI' }, { buffer = event.buf, group = group, callback = vim.lsp.buf.clear_references })
+      vim.api.nvim_create_autocmd('LspDetach', {
+        group = vim.api.nvim_create_augroup('kickstart-lsp-detach', { clear = true }),
+        callback = function(ev)
+          vim.lsp.buf.clear_references()
+          vim.api.nvim_clear_autocmds { group = group, buffer = ev.buf }
+        end,
+      })
+    end
+    if client and client:supports_method('textDocument/inlayHint', event.buf) then
+      map('<leader>th', function()
+        vim.lsp.inlay_hint.enable(not vim.lsp.inlay_hint.is_enabled { bufnr = event.buf })
+      end, 'Toggle inlay hints')
+    end
+  end,
+})
+local servers = {
+  stylua = {},
+  lua_ls = {
+    on_init = function(client)
+      client.server_capabilities.documentFormattingProvider = false
+      if client.workspace_folders then
+        local path = client.workspace_folders[1].name
+        if path ~= vim.fn.stdpath 'config' and (vim.uv.fs_stat(path .. '/.luarc.json') or vim.uv.fs_stat(path .. '/.luarc.jsonc')) then return end
+      end
+      client.config.settings.Lua = vim.tbl_deep_extend('force', client.config.settings.Lua, {
+        runtime = { version = 'LuaJIT', path = { 'lua/?.lua', 'lua/?/init.lua' } },
+        workspace = { checkThirdParty = false, library = vim.api.nvim_get_runtime_file('', true) },
+      })
+    end,
+    settings = { Lua = { format = { enable = false } } },
+  },
+}
+require('mason').setup {}
+require('mason-lspconfig').setup { automatic_enable = false }
+require('mason-tool-installer').setup { ensure_installed = vim.tbl_keys(servers) }
+for name, server in pairs(servers) do
+  vim.lsp.config(name, server)
+  vim.lsp.enable(name)
+end
 
-opt.number         = true                -- 行番号を表示
-opt.autoindent     = true                -- 改行時に自動でインデント
-opt.smartindent    = true                -- 賢いインデント
-opt.tabstop        = 2                   -- タブを何文字分にするか
-opt.shiftwidth     = 2                   -- 自動インデント幅
-opt.expandtab      = true                -- タブを空白に変換
-opt.splitright     = true                -- 縦分割は右に開く
-opt.clipboard      = 'unnamed'           -- レジスタをシステムクリップボードと共有
-opt.hlsearch       = true                -- 検索結果をハイライト
-opt.wrapscan       = true                -- 検索時にファイル末端からループ
-opt.mouse          = 'a'                 -- マウス操作を有効にする
-opt.fileformats    = { 'unix', 'dos', 'mac' }  -- 改行コードの優先順
-opt.fileencodings  = { 'ucs-boms', 'utf-8', 'euc-jp', 'cp932' }  -- 文字エンコーディング
-opt.ambiwidth      = 'double'            -- 全角文字幅
-opt.swapfile       = false               -- スワップファイル無効
-opt.visualbell     = true                -- ビジュアルベル
-opt.list           = true                -- タブや改行を可視化
-opt.diffopt        = 'vertical'          -- diffは縦分割
-opt.cursorline     = true                -- カーソル行をハイライト
-opt.showmatch      = true                -- 対応する括弧をハイライト
+-- フォーマット: 保存時の自動整形は無効。<Space>fで実行。
+vim.pack.add { gh 'stevearc/conform.nvim' }
+require('conform').setup { default_format_opts = { lsp_format = 'fallback' } }
+km({ 'n', 'v' }, '<leader>f', function() require('conform').format { async = true } end, { desc = '[F]ormat buffer' })
 
--- true color対応＆ターミナル設定
-opt.termguicolors = true                  -- 24bitカラー有効
--- もしカスタムターミナルコードが必要なら↓
-vim.cmd([[let &t_8f = "\<Esc>[38;2;%lu;%lu;%lum"]])
-vim.cmd([[let &t_8b = "\<Esc>[48;2;%lu;%lu;%lum"]])
+-- 補完・スニペット
+vim.pack.add {
+  { src = gh 'L3MON4D3/LuaSnip', version = vim.version.range '2.*' },
+  { src = gh 'saghen/blink.cmp', version = vim.version.range '1.*' },
+}
+require('luasnip').setup {}
+require('blink.cmp').setup {
+  keymap = { preset = 'default' }, -- <C-y>: 確定、<C-Space>: 補完、<C-n>/<C-p>: 選択
+  appearance = { nerd_font_variant = 'mono' },
+  completion = { documentation = { auto_show = false, auto_show_delay_ms = 500 } },
+  sources = { default = { 'lsp', 'path', 'snippets' } },
+  snippets = { preset = 'luasnip' },
+  fuzzy = { implementation = 'lua' },
+  signature = { enabled = true },
+}
 
--- キーマップ
-local km = vim.keymap.set
-
--- ノーマルモード
-km('n', '<Esc><Esc>', ':nohlsearch<CR><Esc>')          -- ハイライト消す〜
-km('n', 'j', 'gj', { noremap = true })                 -- ラップ行もちゃんとmove
-km('n', 'k', 'gk', { noremap = true })
-
--- インサートモード
-km('i', 'jj', '<ESC>', { silent = true })              -- jjで抜ける
-km('i', 'っj', '<ESC>', { silent = true })             -- っjでも抜ける
-
+-- Treesitter: パーサーをインストールし、ファイルを開いたときに有効化
+vim.pack.add { { src = gh 'nvim-treesitter/nvim-treesitter', version = 'main' } }
+local treesitter = require 'nvim-treesitter'
+treesitter.install { 'bash', 'c', 'diff', 'html', 'lua', 'luadoc', 'markdown', 'markdown_inline', 'query', 'vim', 'vimdoc' }
+local function treesitter_try_attach(buf, language)
+  if not vim.api.nvim_buf_is_valid(buf) then return end
+  if not vim.treesitter.language.add(language) then return end
+  vim.treesitter.start(buf, language)
+  if vim.treesitter.query.get(language, 'indents') ~= nil then
+    vim.bo[buf].indentexpr = "v:lua.require'nvim-treesitter'.indentexpr()"
+  end
+end
+local available_parsers = treesitter.get_available()
+vim.api.nvim_create_autocmd('FileType', {
+  group = vim.api.nvim_create_augroup('kickstart-treesitter', { clear = true }),
+  callback = function(args)
+    local language = vim.treesitter.language.get_lang(args.match)
+    if not language then return end
+    if vim.tbl_contains(treesitter.get_installed 'parsers', language) then
+      treesitter_try_attach(args.buf, language)
+    elseif vim.tbl_contains(available_parsers, language) then
+      treesitter.install(language):await(function() treesitter_try_attach(args.buf, language) end)
+    else
+      treesitter_try_attach(args.buf, language)
+    end
+  end,
+})
