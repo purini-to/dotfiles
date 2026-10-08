@@ -64,11 +64,11 @@ bind \cg ghq_fzf_cd
 set PATH $HOME/.nodebrew/current/bin $PATH
 
 # Setting PATH for Python 3.12
-# The original version is saved in /Users/hiroshi_urainkyo/.config/fish/config.fish.pysave
+# The original version is saved in $HOME/.config/fish/config.fish.pysave
 set -x PATH "/Library/Frameworks/Python.framework/Versions/3.12/bin" "$PATH"
 
 # Added by Antigravity
-fish_add_path /Users/hiroshi_urainkyo/.antigravity/antigravity/bin
+fish_add_path "$HOME/.antigravity/antigravity/bin"
 
 # bun
 set --export BUN_INSTALL "$HOME/.bun"
@@ -79,20 +79,20 @@ set --export BUN_INSTALL "$HOME/.bun"
 set --export PATH $BUN_INSTALL/bin $PATH
 
 ### MANAGED BY RANCHER DESKTOP START (DO NOT EDIT)
-set --export --prepend PATH "/Users/hiroshi_urainkyo/.rd/bin"
+set --export --prepend PATH "$HOME/.rd/bin"
 ### MANAGED BY RANCHER DESKTOP END (DO NOT EDIT)
 
 # Added by Antigravity
-fish_add_path /Users/hiroshi_urainkyo/.antigravity/antigravity/bin
+fish_add_path "$HOME/.antigravity/antigravity/bin"
 
 # opencode
-fish_add_path /Users/hiroshi_urainkyo/.opencode/bin
+fish_add_path "$HOME/.opencode/bin"
 alias oc-bedrock 'env OPENCODE_CONFIG="$HOME/.config/opencode/profiles/bedrock.json" opencode --standalone'
 alias oc-openai 'env OPENCODE_CONFIG="$HOME/.config/opencode/profiles/openai.json" opencode --standalone'
 alias oc-litellm 'env OPENCODE_CONFIG="$HOME/.config/opencode/profiles/litellm.json" opencode --standalone'
 
 # pnpm
-set -gx PNPM_HOME "/Users/hiroshi_urainkyo/Library/pnpm"
+set -gx PNPM_HOME "$HOME/Library/pnpm"
 if not string match -q -- "$PNPM_HOME/bin" $PATH
   set -gx PATH "$PNPM_HOME/bin" $PATH
 end
