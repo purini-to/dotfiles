@@ -46,6 +46,13 @@ opt.visualbell = true
 opt.diffopt:append 'vertical'
 opt.showmatch = true
 opt.termguicolors = true
+opt.autoread = true
+vim.api.nvim_create_autocmd({ 'FocusGained', 'BufEnter', 'CursorHold' }, {
+  group = vim.api.nvim_create_augroup('agent-checktime', { clear = true }),
+  callback = vim.schedule_wrap(function()
+    if vim.fn.mode() == 'n' and vim.fn.getcmdwintype() == '' then vim.cmd 'checktime' end
+  end),
+})
 
 -- キーマップ・診断
 local km = vim.keymap.set
@@ -151,6 +158,9 @@ require('which-key').setup {
     { '<leader>s', group = '[S]earch', mode = { 'n', 'v' } },
     { '<leader>t', group = '[T]oggle' },
     { '<leader>h', group = 'Git [H]unk', mode = { 'n', 'v' } },
+    { '<leader>g', group = 'Git Review' },
+    { '<leader>x', group = 'Diagnostics' },
+    { '<leader>a', group = 'Agent Context', mode = { 'n', 'x' } },
     { 'gr', group = 'LSP Actions' },
   },
 }
@@ -171,7 +181,44 @@ require('mini.ai').setup { mappings = { around_next = 'aa', inside_next = 'ii' }
 require('mini.surround').setup()
 local statusline = require 'mini.statusline'
 statusline.setup { use_icons = vim.g.have_nerd_font }
+---@diagnostic disable-next-line: duplicate-set-field -- 行・列表示を簡素化するための意図的な上書き
 statusline.section_location = function() return '%2l:%-2v' end
+
+-- Herdrにエージェント管理を任せ、Neovimはレビュー・編集に集中する。
+vim.pack.add { gh 'esmuellert/codediff.nvim', gh 'folke/trouble.nvim', gh 'stevearc/oil.nvim' }
+require('codediff').setup {
+  explorer = { icons = vim.g.have_nerd_font and {} or { folder_closed = '+', folder_open = '-' } },
+}
+require('trouble').setup {
+  icons = vim.g.have_nerd_font and {} or {
+    folder_closed = '+ ', folder_open = '- ', indent = { fold_open = '- ', fold_closed = '+ ' },
+  },
+  formatters = vim.g.have_nerd_font and {} or {
+    file_icon = function() return '' end,
+    kind_icon = function() return '' end,
+  },
+}
+require('oil').setup {
+  columns = vim.g.have_nerd_font and { 'icon' } or {},
+  watch_for_changes = true,
+  keymaps = {
+    ['<C-h>'] = false, ['<C-l>'] = false, ['<C-p>'] = false,
+    ['gp'] = 'actions.preview', ['gr'] = 'actions.refresh',
+  },
+}
+km('n', '<leader>gd', '<cmd>CodeDiff<CR>', { desc = 'Git: Review changes' })
+km('n', '<leader>xx', '<cmd>Trouble diagnostics toggle<CR>', { desc = 'Diagnostics: All' })
+km('n', '<leader>xX', '<cmd>Trouble diagnostics toggle filter.buf=0<CR>', { desc = 'Diagnostics: Buffer' })
+km('n', '<leader>xq', '<cmd>Trouble qflist toggle<CR>', { desc = 'Diagnostics: Quickfix' })
+km('n', '-', '<cmd>Oil<CR>', { desc = 'Open parent directory' })
+km('n', '<leader>ap', function()
+  local path = vim.api.nvim_buf_get_name(0)
+  if path == '' or vim.bo.buftype ~= '' then return end
+  local location = vim.fn.fnamemodify(path, ':.') .. ':' .. vim.api.nvim_win_get_cursor(0)[1]
+  vim.fn.setreg('+', location)
+  vim.notify('Copied: ' .. location)
+end, { desc = 'Agent: Copy file path and line' })
+km('x', '<leader>ac', '"+y', { desc = 'Agent: Copy selection' })
 
 -- Telescope: ファイル・全文・ヘルプ検索
 local telescope_plugins = { gh 'nvim-telescope/telescope.nvim', gh 'nvim-telescope/telescope-ui-select.nvim' }
@@ -181,6 +228,7 @@ require('telescope').setup { extensions = { ['ui-select'] = { require('telescope
 pcall(require('telescope').load_extension, 'fzf')
 pcall(require('telescope').load_extension, 'ui-select')
 local builtin = require 'telescope.builtin'
+km('n', '<C-p>', builtin.find_files, { desc = 'Search: Files' })
 for key, picker in pairs {
   sh = 'help_tags', sk = 'keymaps', sf = 'find_files', ss = 'builtin', sg = 'live_grep',
   sd = 'diagnostics', sr = 'resume', ['s.'] = 'oldfiles', sc = 'commands', ['<leader>'] = 'buffers',
