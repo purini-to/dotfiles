@@ -37,10 +37,13 @@ alias gdb 'git branch | grep -v "main\|master" | xargs git branch -D'
 alias pull "git pull"
 alias push "git push"
 alias greset "git clean -fd && git reset --hard"
-alias master "git checkout master"
-alias main "git checkout main"
+alias master "git checkout master; pull"
+alias main "git checkout main; pull"
+alias c "git checkout"
 
 alias see "hub browse"
+
+alias awake='caffeinate -i'
 
 starship init fish | source
 zoxide init fish | source
@@ -57,3 +60,40 @@ end
 
 # CTRL+g で上の関数を呼び出し
 bind \cg ghq_fzf_cd
+
+set PATH $HOME/.nodebrew/current/bin $PATH
+
+# Setting PATH for Python 3.12
+# The original version is saved in /Users/hiroshi_urainkyo/.config/fish/config.fish.pysave
+set -x PATH "/Library/Frameworks/Python.framework/Versions/3.12/bin" "$PATH"
+
+# Added by Antigravity
+fish_add_path /Users/hiroshi_urainkyo/.antigravity/antigravity/bin
+
+# bun
+set --export BUN_INSTALL "$HOME/.bun"
+set --export PATH $BUN_INSTALL/bin $PATH
+
+# bun
+set --export BUN_INSTALL "$HOME/.bun"
+set --export PATH $BUN_INSTALL/bin $PATH
+
+### MANAGED BY RANCHER DESKTOP START (DO NOT EDIT)
+set --export --prepend PATH "/Users/hiroshi_urainkyo/.rd/bin"
+### MANAGED BY RANCHER DESKTOP END (DO NOT EDIT)
+
+# Added by Antigravity
+fish_add_path /Users/hiroshi_urainkyo/.antigravity/antigravity/bin
+
+# opencode
+fish_add_path /Users/hiroshi_urainkyo/.opencode/bin
+alias oc-bedrock 'env OPENCODE_CONFIG="$HOME/.config/opencode/profiles/bedrock.json" opencode --standalone'
+alias oc-openai 'env OPENCODE_CONFIG="$HOME/.config/opencode/profiles/openai.json" opencode --standalone'
+alias oc-litellm 'env OPENCODE_CONFIG="$HOME/.config/opencode/profiles/litellm.json" opencode --standalone'
+
+# pnpm
+set -gx PNPM_HOME "/Users/hiroshi_urainkyo/Library/pnpm"
+if not string match -q -- "$PNPM_HOME/bin" $PATH
+  set -gx PATH "$PNPM_HOME/bin" $PATH
+end
+# pnpm end
