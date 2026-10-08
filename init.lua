@@ -187,7 +187,19 @@ statusline.section_location = function() return '%2l:%-2v' end
 -- Herdrにエージェント管理を任せ、Neovimはレビュー・編集に集中する。
 vim.pack.add { gh 'esmuellert/codediff.nvim', gh 'folke/trouble.nvim', gh 'stevearc/oil.nvim' }
 require('codediff').setup {
-  explorer = { icons = vim.g.have_nerd_font and {} or { folder_closed = '+', folder_open = '-' } },
+  diff = {
+    layout = 'inline',
+    jump_to_first_change = true,
+    compact = true,
+    compact_context_lines = 3,
+  },
+  explorer = {
+    icons = vim.g.have_nerd_font and {} or { folder_closed = '+', folder_open = '-' },
+    width = 22,
+    auto_refresh = true,
+    auto_open_on_cursor = true,
+    initial_focus = 'explorer',
+  },
 }
 require('trouble').setup {
   icons = vim.g.have_nerd_font and {} or {
