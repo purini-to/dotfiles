@@ -17,6 +17,10 @@ nvim
 Git、make、Cコンパイラーも必要（macOSではXcode Command Line Tools）。
 既存のlazy.nvimデータはそのまま残してよい。新構成では読み込まない。
 旧設定はGit履歴から参照できる。Neovim 0.11以前では新設定は起動しない。
+設定本体は`nvim/`、追加Lua機能は`nvim/lua/dotfiles/`に置く。`link.sh`は両方をリンクする。
+CodeDiffのAI要約は右下のフロートに、固定ラベルなしの短い文章または箇条書きで表示する。`render-markdown.nvim`は要約バッファだけに適用し、Markdownの強調記号を隠して強調表示する。通常のMarkdown編集画面には適用しない。
+要約と同時に簡易レビューし、変更箇所に明らかな不具合がある場合だけ根拠付きの「注意」を追記する。スタイル提案や推測的な懸念は対象外。指摘がなければ要約のみ表示する。ローカルLLMの補助チェックであり、安全性や不具合の不在は保証しない。
+現在ファイルの生成完了後、同じグループの次の1ファイルを先読みする（PRのリビジョン比較も対象）。フロート下部に「先読み中／先読み済み」を表示。先読み対象へ移動した場合は、Diffと比較条件が一致する進行中の推論を引き継ぐ。完了済みなら`Cached`として表示する。
 
 Neovim内でプラグイン更新:
 
@@ -27,7 +31,7 @@ Neovim内でプラグイン更新:
 
 前者は状態確認、後者は更新取得。更新画面で`:write`で適用、`:quit`で中止。
 ロックファイルは`~/.config/nvim/nvim-pack-lock.json`に自動生成される。
-`init.lua`だけをシンボリックリンクしているため、ロックファイルはこのリポジトリには自動保存されない。
+設定ファイルとLuaモジュールをシンボリックリンクしている。ロックファイルはこのリポジトリには自動保存されない。
 
 ## 操作
 
@@ -41,7 +45,7 @@ Leaderはスペース。Catppuccin Macchiato、2スペース、`jj`/`っj`、表
 - `grd` / `grr` / `grn`: 定義 / 参照 / 名前変更（LSP接続時）
 - `<C-Space>` / `<C-y>`: 補完表示 / 確定
 - `<Space>f`: 整形（保存時の自動整形は無効）
-- `:Mason`: 言語サーバー管理。追加する言語は`init.lua`の`servers`に設定
+- `:Mason`: 言語サーバー管理。追加する言語は`nvim/init.lua`の`servers`に設定
 - `:checkhealth`: 依存ツール・プラグインの診断
 
 ## Herdr・AIエージェントとの併用
@@ -49,6 +53,8 @@ Leaderはスペース。Catppuccin Macchiato、2スペース、`jj`/`っj`、表
 エージェントの実行・ターミナル管理はHerdr側に任せ、Neovimは編集とレビューに使用する。
 
 - `<Space>gd`: CodeDiffで変更ファイルを一覧・比較。外部変更にも追従する
+- `<Space>at`: CodeDiffのローカルAI要約を有効 / 無効にする
+- `<Space>as`: CodeDiffの現在ファイル要約を再生成する
 - `:CodeDiff --staged`: ステージ済み変更を比較
 - `:CodeDiff origin/main...HEAD`: 分岐点からHEADまでの変更を比較（比較先はプロジェクトに合わせる）
 - `<Space>xx` / `<Space>xX`: Troubleで受信済み診断の全体 / 現在ファイルを表示
@@ -61,6 +67,8 @@ Leaderはスペース。Catppuccin Macchiato、2スペース、`jj`/`っj`、表
 CodeDiffは初回利用時と更新後にGitHub Releasesから差分計算用ネイティブライブラリを取得する。
 ライブレビュー用のファイル監視バイナリも必要に応じて自動取得する。
 取得に失敗した場合は`:CodeDiff install`で再試行できる。
+
+CodeDiffはOllamaの`qwen3.5:4b`で現在ファイルのDiffを日本語要約する。Ollamaは任意依存（`brew install ollama`）、モデル取得は`ollama pull qwen3.5:4b`。接続先は`127.0.0.1`のみ。要約はメモリ内に最大100件保持し、次のファイルを1件だけ先読みする。長いDiffは分割要約して全体を統合するため、生成に時間がかかる。未追跡ファイルも新規追加として内容・役割を説明する。競合は対象外。秘密値を含むDiffもローカルOllamaへ送るため、応答に秘密値を引用しないよう指示するが、完全な保証はない。
 
 Oilでは通常の編集操作でファイル名を変更し、`:w`で操作内容を確認・実行する。
 削除はゴミ箱移動ではなく通常の削除なので、確認画面を必ず読む。
@@ -85,6 +93,13 @@ nvim --headless '+lua assert(vim.fn.has("nvim-0.12") == 1); assert(vim.g.colors_
 
 ```sh
 nvim --headless '+lua vim.schedule(function() local ok, err = pcall(dofile, "tests/neovim-review.lua"); if not ok then print(err); vim.cmd("cquit 1") end end)'
+```
+
+AI設定のチェック（Ollamaサーバー不要）:
+
+```sh
+nvim --headless '+lua local ok, err = pcall(dofile, "tests/neovim-codediff-ai.lua"); if not ok then print(err); vim.cmd("cquit 1") end' +qa
+nvim --headless '+lua local ok, err = pcall(dofile, "tests/neovim-codediff-prefetch.lua"); if not ok then print(err); vim.cmd("cquit 1") end' +qa
 ```
 
 プラグイン公式: [CodeDiff](https://github.com/esmuellert/codediff.nvim)・[Trouble](https://github.com/folke/trouble.nvim)・[Oil](https://github.com/stevearc/oil.nvim)

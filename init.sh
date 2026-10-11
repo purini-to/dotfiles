@@ -11,6 +11,7 @@ brew install fish
 brew install fisher
 brew install fzf
 brew install neovim
+# Optional local AI summaries for CodeDiff: brew install ollama
 brew install fd
 brew install tree-sitter-cli
 brew install ghq

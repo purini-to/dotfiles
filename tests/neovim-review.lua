@@ -10,7 +10,7 @@ end
 assert(vim.fn.maparg(' ac', 'x') == '"+y')
 assert(vim.fn.maparg('jj', 'i') == '<Esc>')
 -- CodeDiff keeps wrapping enabled even when rendering resets the pane options.
-vim.cmd 'edit init.lua'
+vim.cmd 'edit nvim/init.lua'
 vim.cmd 'CodeDiff file HEAD'
 local lifecycle = require 'codediff.ui.lifecycle'
 assert(vim.wait(5000, function()
