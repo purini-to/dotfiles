@@ -1,0 +1,32 @@
+onboarding = false
+
+[ui]
+status_indicators = "symbols"
+
+[ui.toast]
+delivery = "herdr"
+
+# Neovimを開く
+[[keys.command]]
+key = "prefix+alt+v"
+type = "pane"
+command = "nvim"
+description = "Open Neovim"
+
+# Git差分確認。qで閉じる
+[[keys.command]]
+key = "prefix+alt+g"
+type = "popup"
+command = "git diff --color=always | less -R"
+description = "Show Git diff"
+width = "90%"
+height = "90%"
+
+# 一時シェル。exitで閉じる
+[[keys.command]]
+key = "prefix+t"
+type = "popup"
+command = 'exec "${SHELL:-sh}"'
+description = "Open scratch terminal"
+width = "80%"
+height = "80%"

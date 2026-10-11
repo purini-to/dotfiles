@@ -84,7 +84,7 @@ nvim --headless '+lua assert(vim.fn.has("nvim-0.12") == 1); assert(vim.g.colors_
 レビュー機能のチェック（初回インストール完了後）:
 
 ```sh
-nvim --headless '+lua local ok, err = pcall(dofile, "tests/neovim-review.lua"); if not ok then print(err); vim.cmd("cquit 1") end' +qa!
+nvim --headless '+lua vim.schedule(function() local ok, err = pcall(dofile, "tests/neovim-review.lua"); if not ok then print(err); vim.cmd("cquit 1") end end)'
 ```
 
 プラグイン公式: [CodeDiff](https://github.com/esmuellert/codediff.nvim)・[Trouble](https://github.com/folke/trouble.nvim)・[Oil](https://github.com/stevearc/oil.nvim)

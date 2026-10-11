@@ -8,6 +8,9 @@ ln -snfv ${CURRENTT_DIR}/alacritty.toml ${HOME}/.config/alacritty/alacritty.toml
 mkdir -p ${HOME}/.config/fish
 ln -snfv ${CURRENTT_DIR}/config.fish ${HOME}/.config/fish/config.fish
 
+mkdir -p ${HOME}/.config/herdr
+ln -snfv ${CURRENTT_DIR}/herdr.toml ${HOME}/.config/herdr/config.toml
+
 mkdir -p ${HOME}/.config/nvim
 ln -snfv ${CURRENTT_DIR}/init.lua ${HOME}/.config/nvim/init.lua
 

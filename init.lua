@@ -179,6 +179,11 @@ if vim.g.have_nerd_font then
 end
 require('mini.ai').setup { mappings = { around_next = 'aa', inside_next = 'ii' }, n_lines = 500 }
 require('mini.surround').setup()
+local jump2d = require 'mini.jump2d'
+jump2d.setup { mappings = { start_jumping = '' } }
+km({ 'n', 'x', 'o' }, '<leader>j', function()
+  jump2d.start(jump2d.builtin_opts.word_start)
+end, { desc = 'Jump: Visible word' })
 local statusline = require 'mini.statusline'
 statusline.setup { use_icons = vim.g.have_nerd_font }
 ---@diagnostic disable-next-line: duplicate-set-field -- 行・列表示を簡素化するための意図的な上書き
@@ -192,6 +197,8 @@ require('codediff').setup {
     jump_to_first_change = true,
     compact = true,
     compact_context_lines = 3,
+    cycle_next_file = true,
+    cycle_hunks_across_files = true,
   },
   explorer = {
     icons = vim.g.have_nerd_font and {} or { folder_closed = '+', folder_open = '-' },
@@ -200,7 +207,32 @@ require('codediff').setup {
     auto_open_on_cursor = true,
     initial_focus = 'explorer',
   },
+  keymaps = {
+    view = {
+      next_hunk = { '.', ']c' },
+      prev_hunk = { ',', '[c' },
+    },
+  },
 }
+-- CodeDiffは再描画でもnowrapに戻すため、差分ペインだけ折り返しを維持する。
+local function wrap_codediff()
+  for _, tab in ipairs(vim.api.nvim_list_tabpages()) do
+    for _, win in pairs { require('codediff.ui.lifecycle').get_windows(tab) } do
+      if vim.api.nvim_win_is_valid(win) then vim.wo[win].wrap = true end
+    end
+  end
+end
+local codediff_wrap_group = vim.api.nvim_create_augroup('codediff-wrap', { clear = true })
+local function schedule_codediff_wrap() vim.schedule(wrap_codediff) end
+vim.api.nvim_create_autocmd('User', { group = codediff_wrap_group, pattern = 'CodeDiffOpen', callback = schedule_codediff_wrap })
+-- autocmd内のnowrap設定ではOptionSetが発火しないため、ペイン移動後にも適用する。
+vim.api.nvim_create_autocmd({ 'BufWinEnter', 'BufEnter', 'WinEnter', 'FileType' }, {
+  group = codediff_wrap_group, callback = schedule_codediff_wrap,
+})
+vim.api.nvim_create_autocmd('OptionSet', {
+  group = codediff_wrap_group, pattern = 'wrap',
+  callback = function() if not vim.v.option_new then schedule_codediff_wrap() end end,
+})
 require('trouble').setup {
   icons = vim.g.have_nerd_font and {} or {
     folder_closed = '+ ', folder_open = '- ', indent = { fold_open = '- ', fold_closed = '+ ' },
@@ -236,7 +268,14 @@ km('x', '<leader>ac', '"+y', { desc = 'Agent: Copy selection' })
 local telescope_plugins = { gh 'nvim-telescope/telescope.nvim', gh 'nvim-telescope/telescope-ui-select.nvim' }
 if vim.fn.executable 'make' == 1 then table.insert(telescope_plugins, gh 'nvim-telescope/telescope-fzf-native.nvim') end
 vim.pack.add(telescope_plugins)
-require('telescope').setup { extensions = { ['ui-select'] = { require('telescope.themes').get_dropdown() } } }
+require('telescope').setup {
+  pickers = {
+    find_files = {
+      find_command = { 'rg', '--files', '--hidden', '--no-ignore', '--glob', '!node_modules', '--glob', '!.venv', '--glob', '!.git' },
+    },
+  },
+  extensions = { ['ui-select'] = { require('telescope.themes').get_dropdown() } },
+}
 pcall(require('telescope').load_extension, 'fzf')
 pcall(require('telescope').load_extension, 'ui-select')
 local builtin = require 'telescope.builtin'
@@ -244,6 +283,7 @@ km('n', '<C-p>', builtin.find_files, { desc = 'Search: Files' })
 for key, picker in pairs {
   sh = 'help_tags', sk = 'keymaps', sf = 'find_files', ss = 'builtin', sg = 'live_grep',
   sd = 'diagnostics', sr = 'resume', ['s.'] = 'oldfiles', sc = 'commands', ['<leader>'] = 'buffers',
+  sj = 'jumplist', sm = 'marks',
 } do
   km('n', '<leader>' .. key, builtin[picker], { desc = 'Search: ' .. picker })
 end
@@ -300,6 +340,8 @@ vim.api.nvim_create_autocmd('LspAttach', {
   end,
 })
 local servers = {
+  pyright = {},
+  ts_ls = {},
   stylua = {},
   lua_ls = {
     on_init = function(client)

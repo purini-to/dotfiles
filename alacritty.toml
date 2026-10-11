@@ -2,6 +2,7 @@
 
 # Window settings
 [window]
+option_as_alt = "Both"
 padding = { x = 8, y = 8 }
 dynamic_title = true
 decorations = "Full"

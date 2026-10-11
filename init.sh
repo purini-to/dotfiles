@@ -21,6 +21,7 @@ brew install zoxide
 brew install hub
 brew install gibo
 brew install jq
+brew install herdr
 
 brew install starship
 
