@@ -75,6 +75,7 @@ Leaderはスペース。Catppuccin Macchiato、2スペース、`jj`/`っj`、表
 生成には共通のローカルOllama設定を使い、`git diff --cached`だけを送る。部分stageではstageされた内容だけが対象で、unstaged・未追跡の内容は送らない。長い差分は全体を分割要約して統合する（時間がかかる）。バイナリの内容は送らず、変更情報だけを渡す。秘密値を含む差分もローカルへ送るため、生成結果は必ず確認する。生成中に本文やstage済み差分が変わった場合は適用しない。`:GitCommitAICancel`で中止、適用後は`u`で戻せる。自動commit・自動pushはしない。
 
 lazygitはNeovim標準ターミナルで起動し、コミット編集時には同じ設定の子Neovimを起動する。Git editorはそのプロセスだけ上書きし、既存のグローバルGit設定は変更しない。追加プラグイン・lazygit設定ファイルは不要（`link.sh`の既存Luaリンクで有効になる）。
+lazygitの罫線・文字の描画崩れを防ぐため、起動中は`ambiwidth=single`にし、最後のlazygit終了時に元へ戻す。この設定はNeovim全体に作用するため、起動中は他のタブにも適用される。
 
 CodeDiffは初回利用時と更新後にGitHub Releasesから差分計算用ネイティブライブラリを取得する。
 ライブレビュー用のファイル監視バイナリも必要に応じて自動取得する。

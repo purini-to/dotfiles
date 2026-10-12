@@ -124,11 +124,13 @@ assert(calls == before, 'empty index must not call LLM')
 -- Test terminal startup and cleanup without interacting with a real TUI.
 local jobstart, executable = vim.fn.jobstart, vim.fn.executable
 local options
+vim.o.ambiwidth = 'double'
 vim.fn.executable = function() return 1 end
 vim.fn.jobstart = function(command, opts)
   assert(command[1] == 'lazygit')
   assert(opts.term and opts.cwd == root)
   assert(opts.env.GIT_EDITOR == vim.fn.shellescape(vim.v.progpath))
+  assert(vim.o.ambiwidth == 'single', 'terminal must use single-width box drawing')
   options = opts
   return 1
 end
@@ -137,6 +139,24 @@ git.open()
 assert(#vim.api.nvim_list_tabpages() == tabs + 1)
 options.on_exit(1, 0)
 assert(vim.wait(1000, function() return #vim.api.nvim_list_tabpages() == tabs end), 'terminal tab must close on exit')
+assert(vim.o.ambiwidth == 'double', 'original character width must be restored on exit')
+
+-- Multiple terminal jobs must not restore the width while another is still live.
+git.open()
+local first_exit = options.on_exit
+git.open()
+local second_exit = options.on_exit
+first_exit(1, 0)
+assert(vim.wait(1000, function() return #vim.api.nvim_list_tabpages() == tabs + 1 end))
+assert(vim.o.ambiwidth == 'single')
+second_exit(1, 0)
+assert(vim.wait(1000, function() return #vim.api.nvim_list_tabpages() == tabs end))
+assert(vim.o.ambiwidth == 'double')
+
+vim.fn.jobstart = function() return -1 end
+git.open()
+assert(vim.o.ambiwidth == 'double', 'failed startup must restore character width')
+assert(#vim.api.nvim_list_tabpages() == tabs, 'failed startup must close its tab')
 vim.fn.jobstart, vim.fn.executable = jobstart, executable
 vim.cmd.cd(original_cwd)
 vim.api.nvim_buf_delete(buf, { force = true })
