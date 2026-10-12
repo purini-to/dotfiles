@@ -196,6 +196,7 @@ statusline.section_location = function() return '%2l:%-2v' end
 vim.pack.add { gh 'esmuellert/codediff.nvim', gh 'folke/trouble.nvim', gh 'stevearc/oil.nvim', gh 'MeanderingProgrammer/render-markdown.nvim' }
 require 'dotfiles.codediff'
 require('dotfiles.local_llm').setup()
+require('dotfiles.git').setup()
 require('dotfiles.codediff_ai').setup()
 require('dotfiles.codediff_review').setup()
 require('trouble').setup {

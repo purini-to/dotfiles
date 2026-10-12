@@ -75,9 +75,17 @@ assert(vim.wo[win].conceallevel == 2)
 assert(not vim.wo[win].linebreak, 'mixed Japanese/code must not use word wrapping')
 ui.close(tabpage)
 assert(not vim.api.nvim_buf_is_valid(buf), 'closed summary buffers must be wiped')
+local rows = math.floor(vim.o.lines / 4) + 1
+ui.show(tabpage, 'expanded.md', string.rep('要約\n', rows), 'Ready')
+win = ui.windows[tabpage]
+assert(vim.api.nvim_win_get_height(win) == rows, 'summary must show all rows beyond the old quarter-screen cap')
+assert(vim.api.nvim_win_get_height(editor) >= 8, 'summary must preserve at least eight code rows')
+assert(vim.api.nvim_get_current_win() == editor, 'expanded summary must not steal focus')
+ui.close(tabpage)
 ui.show(tabpage, 'large.md', string.rep('長い要約\n', 100), 'Ready')
 win = ui.windows[tabpage]
-assert(vim.api.nvim_win_get_height(win) <= math.max(1, math.floor(vim.o.lines / 4)), 'summary must leave room for code')
+assert(vim.api.nvim_win_get_height(editor) >= 8, 'oversized summary must leave room for code')
+assert(vim.api.nvim_win_get_height(win) > math.floor(vim.o.lines / 4), 'oversized summary must use available space')
 vim.api.nvim_set_current_win(win)
 vim.cmd 'normal! G'
 assert(vim.fn.line('w$') == 100, 'long summary must be scrollable to the end')

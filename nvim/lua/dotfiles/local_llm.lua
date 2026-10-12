@@ -1,4 +1,4 @@
--- ローカルLLM(Ollama)の共通設定と呼び出し。CodeDiffの要約とPRレビューの入力補佐が共有する。
+-- ローカルLLM(Ollama)の共通設定と呼び出し。CodeDiffの要約、PRレビュー、コミットメッセージ生成が共有する。
 -- 接続先は 127.0.0.1 のみ。モデルは <Space>am / :LocalLLMModel で切り替え、stdpath('state') に保存する。
 local M = { model = 'gemma4:e4b-it-q4_K_M', endpoint = 'http://127.0.0.1:11434' }
 local model_names, models_pending, models_checked = {}, false, -math.huge

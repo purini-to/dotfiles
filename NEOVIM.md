@@ -8,7 +8,7 @@ Neovim 0.12以上。現行Kickstart.nvimの`vim.pack`構成をベースに、学
 ```sh
 brew update
 brew upgrade neovim
-brew install ripgrep fd tree-sitter-cli
+brew install ripgrep fd tree-sitter-cli lazygit
 ./link.sh
 nvim
 ```
@@ -18,7 +18,7 @@ Git、make、Cコンパイラーも必要（macOSではXcode Command Line Tools�
 既存のlazy.nvimデータはそのまま残してよい。新構成では読み込まない。
 旧設定はGit履歴から参照できる。Neovim 0.11以前では新設定は起動しない。
 設定本体は`nvim/`、追加Lua機能は`nvim/lua/dotfiles/`に置く。`link.sh`は両方をリンクする。
-CodeDiffのAI要約は下部の専用分割に、固定ラベルなしの短い文章または箇条書きで表示する。差分エディタと重ならず、高さは画面の約1/4まで。長い要約は`Ctrl-j`でパネルへ移動してスクロールできる。`render-markdown.nvim`は要約バッファだけに適用し、Markdownの強調記号を隠して強調表示する。通常のMarkdown編集画面には適用しない。
+CodeDiffのAI要約は下部の専用分割に、固定ラベルなしの短い文章または箇条書きで表示する。差分エディタと重ならず、本文が収まる高さまで自動で広がる（差分側には最低8行を残す）。端末サイズ変更時も高さを調整する。画面に入りきらない要約だけは`Ctrl-j`でパネルへ移動してスクロールできる。`render-markdown.nvim`は要約バッファだけに適用し、Markdownの強調記号を隠して強調表示する。通常のMarkdown編集画面には適用しない。
 要約と同時に簡易レビューし、変更箇所に明らかな不具合がある場合だけ根拠付きの「注意」を追記する。スタイル提案や推測的な懸念は対象外。指摘がなければ要約のみ表示する。ローカルLLMの補助チェックであり、安全性や不具合の不在は保証しない。
 現在ファイルの生成完了後、同じグループの次の3ファイルまで順番に先読みする（PRのリビジョン比較も対象）。ファイル移動後は移動先から3ファイル先まで補充する。パネルのステータス行に「先読み中／先読み済み」を表示。先読み対象へ移動した場合は、Diffと比較条件が一致する進行中の推論を引き継ぐ。完了済みなら`Cached`として表示する。
 
@@ -55,6 +55,7 @@ Leaderはスペース。Catppuccin Macchiato、2スペース、`jj`/`っj`、表
 エージェントの実行・ターミナル管理はHerdr側に任せ、Neovimは編集とレビューに使用する。
 
 - `<Space>gd`: CodeDiffで変更ファイルを一覧・比較。外部変更にも追従する
+- `<Space>gg` / `:LazyGit`: lazygitを専用タブで開き、stage・commit・pushする
 - `<Space>at`: CodeDiffのローカルAI要約を有効 / 無効にする
 - `<Space>as`: CodeDiffの現在ファイル要約を再生成する
 - `:CodeDiff --staged`: ステージ済み変更を比較
@@ -66,6 +67,14 @@ Leaderはスペース。Catppuccin Macchiato、2スペース、`jj`/`っj`、表
 - `<C-p>`: Telescopeのファイル検索（ノーマルモードのみ）
 - `<Space>ap`: 作業ディレクトリからの相対パスと行番号をクリップボードへコピー
 - 選択モードの`<Space>ac`: 選択コードをクリップボードへコピー
+
+### コミット・push（lazygit）
+
+`<Space>gg`で現在ファイルのリポジトリ（ファイルがなければ作業ディレクトリ）を開く。ファイル一覧で`Space`でstage切替、`C`（大文字）でNeovimのコミット編集画面を開く。`Ctrl-g`（入力・ノーマル両モード）または`:GitCommitAI`でstage済み差分から日本語のメッセージ案を生成する。確認・修正して`:wq`でcommit、`:cq`で取消。lazygitへ戻って`P`（大文字）でpush、`q`で閉じる。通常の`c`はlazygit内の手入力用。
+
+生成には共通のローカルOllama設定を使い、`git diff --cached`だけを送る。部分stageではstageされた内容だけが対象で、unstaged・未追跡の内容は送らない。長い差分は全体を分割要約して統合する（時間がかかる）。バイナリの内容は送らず、変更情報だけを渡す。秘密値を含む差分もローカルへ送るため、生成結果は必ず確認する。生成中に本文やstage済み差分が変わった場合は適用しない。`:GitCommitAICancel`で中止、適用後は`u`で戻せる。自動commit・自動pushはしない。
+
+lazygitはNeovim標準ターミナルで起動し、コミット編集時には同じ設定の子Neovimを起動する。Git editorはそのプロセスだけ上書きし、既存のグローバルGit設定は変更しない。追加プラグイン・lazygit設定ファイルは不要（`link.sh`の既存Luaリンクで有効になる）。
 
 CodeDiffは初回利用時と更新後にGitHub Releasesから差分計算用ネイティブライブラリを取得する。
 ライブレビュー用のファイル監視バイナリも必要に応じて自動取得する。
@@ -120,6 +129,7 @@ AI設定のチェック（Ollamaサーバー不要）:
 ```sh
 nvim --headless '+lua local ok, err = pcall(dofile, "tests/neovim-codediff-ai.lua"); if not ok then print(err); vim.cmd("cquit 1") end' +qa
 nvim --headless '+lua local ok, err = pcall(dofile, "tests/neovim-codediff-prefetch.lua"); if not ok then print(err); vim.cmd("cquit 1") end' +qa
+nvim --headless -u NONE -l tests/neovim-git.lua
 ```
 
 プラグイン公式: [CodeDiff](https://github.com/esmuellert/codediff.nvim)・[Trouble](https://github.com/folke/trouble.nvim)・[Oil](https://github.com/stevearc/oil.nvim)
