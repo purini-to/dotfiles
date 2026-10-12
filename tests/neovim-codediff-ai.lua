@@ -5,7 +5,7 @@ local source = require 'dotfiles.codediff_ai.source'
 local ui = require 'dotfiles.codediff_ai.ui'
 
 assert(ai.enabled)
-assert(ollama.model == 'qwen3.5:4b')
+assert(ollama.model == 'gemma4:e4b-it-q4_K_M')
 assert(ollama.prompt_version == 'summary-review-v5')
 local large = string.rep('長いファイルの変更内容\n', 1500)
 local chunks = ollama.chunks(large)
@@ -58,16 +58,31 @@ vim.wait(50, function() return false end)
 assert(killed and calls == 1, 'cancellation must prevent remaining chunks')
 vim.system = system
 local tabpage = vim.api.nvim_get_current_tabpage()
+local editor = vim.api.nvim_get_current_win()
 ui.show(tabpage, 'long-summary.md', string.rep('要約', 60), 'Ready')
 local win = ui.windows[tabpage]
 assert(vim.api.nvim_win_get_height(win) >= 2, 'long summaries must wrap without clipping')
-assert(vim.api.nvim_win_get_config(win).anchor == 'SE', 'summary must appear at bottom right')
+assert(vim.api.nvim_win_get_config(win).relative == '', 'summary must reserve space instead of covering code')
+assert(vim.api.nvim_get_current_win() == editor, 'summary must not steal focus')
+local panel_row = vim.api.nvim_win_get_position(win)[1]
+local editor_bottom = vim.api.nvim_win_get_position(editor)[1] + vim.api.nvim_win_get_height(editor)
+assert(panel_row > editor_bottom, 'summary must sit below the editor')
+ui.status(tabpage, '先読み中: 100%.lua')
+assert(vim.wo[win].statusline:find('100%%.lua', 1, true), 'statusline must escape percent signs')
 local buf = vim.api.nvim_win_get_buf(win)
 assert(vim.bo[buf].filetype == 'markdown' and vim.b[buf].codediff_ai_summary)
 assert(vim.wo[win].conceallevel == 2)
 assert(not vim.wo[win].linebreak, 'mixed Japanese/code must not use word wrapping')
 ui.close(tabpage)
 assert(not vim.api.nvim_buf_is_valid(buf), 'closed summary buffers must be wiped')
+ui.show(tabpage, 'large.md', string.rep('長い要約\n', 100), 'Ready')
+win = ui.windows[tabpage]
+assert(vim.api.nvim_win_get_height(win) <= math.max(1, math.floor(vim.o.lines / 4)), 'summary must leave room for code')
+vim.api.nvim_set_current_win(win)
+vim.cmd 'normal! G'
+assert(vim.fn.line('w$') == 100, 'long summary must be scrollable to the end')
+vim.api.nvim_set_current_win(editor)
+ui.close(tabpage)
 ui.show(tabpage, 'example.lua', '- **変更**：設定を移動\n- **影響**：リンク先を更新', 'Ready')
 win = ui.windows[tabpage]
 buf = vim.api.nvim_win_get_buf(win)

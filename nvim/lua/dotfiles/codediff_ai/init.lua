@@ -29,7 +29,9 @@ local function stop_read(tabpage)
 end
 
 local summarize
-local function prefetch_next(tabpage, file, generation)
+local function prefetch_next(tabpage, file, generation, origin_path, remaining)
+  origin_path, remaining = origin_path or file.path, remaining or 3
+  if remaining == 0 or not is_current(tabpage, origin_path, generation) then return end
   local panel = require('codediff.ui.lifecycle').get_panel_view(tabpage)
   local data = panel and panel.data
   local group = file.group
@@ -37,9 +39,9 @@ local function prefetch_next(tabpage, file, generation)
   for index, candidate in ipairs(files) do
     if candidate.path == file.path and files[index + 1] then
       vim.defer_fn(function()
-        if generations[tabpage] == generation then
+        if is_current(tabpage, origin_path, generation) then
           local next_file = vim.tbl_extend('force', files[index + 1], { group = group })
-          summarize(tabpage, next_file, false, generation, file.path)
+          summarize(tabpage, next_file, false, generation, origin_path, remaining - 1)
         end
       end, 50)
       return
@@ -47,12 +49,14 @@ local function prefetch_next(tabpage, file, generation)
   end
 end
 
-summarize = function(tabpage, file, display, generation, origin_path)
+summarize = function(tabpage, file, display, generation, origin_path, remaining)
   local args, root_or_error = source.diff(tabpage, file)
   if not args then
     if display then
       stop_request(tabpage)
       ui.show(tabpage, file.path, nil, root_or_error)
+    else
+      prefetch_next(tabpage, file, generation, origin_path, remaining)
     end
     return
   end
@@ -63,11 +67,13 @@ summarize = function(tabpage, file, display, generation, origin_path)
     reads[tabpage] = nil
     if result.code ~= 0 and not (file.status == '??' and result.code == 1) then
       if display then stop_request(tabpage); ui.show(tabpage, file.path, nil, 'Could not read Git diff') end
+      if not display then prefetch_next(tabpage, file, generation, origin_path, remaining) end
       return
     end
     local patch = result.stdout or ''
     if patch == '' then
       if display then stop_request(tabpage); ui.show(tabpage, file.path, nil, 'No textual diff available') end
+      if not display then prefetch_next(tabpage, file, generation, origin_path, remaining) end
       return
     end
     -- Freeze comparison identity before the async read; prefetch and selection use identical keys.
@@ -82,6 +88,7 @@ summarize = function(tabpage, file, display, generation, origin_path)
         prefetch_next(tabpage, file, generation)
       elseif is_current(tabpage, origin_path, generation) then
         ui.status(tabpage, '先読み済み: ' .. file.path)
+        prefetch_next(tabpage, file, generation, origin_path, remaining)
       end
       return
     end
@@ -112,6 +119,7 @@ summarize = function(tabpage, file, display, generation, origin_path)
           if summary then prefetch_next(tabpage, file, request.generation) end
         elseif is_current(tabpage, origin_path, request.generation) then
           ui.status(tabpage, summary and ('先読み済み: ' .. file.path) or '先読み失敗')
+          if summary then prefetch_next(tabpage, file, request.generation, origin_path, remaining) end
         end
       end)
     end)

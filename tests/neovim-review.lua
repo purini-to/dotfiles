@@ -37,6 +37,17 @@ for _, win in ipairs { left, right, left, right } do
   vim.api.nvim_set_current_win(win)
   assert(vim.wait(1000, function() return vim.wo[win].wrap end), 'CodeDiff wrap must survive left/right focus')
 end
+local summary = require 'dotfiles.codediff_ai.ui'
+local tabpage = vim.api.nvim_get_current_tabpage()
+summary.show(tabpage, 'init.lua', string.rep('要約\n', 20), 'Ready')
+local panel = summary.windows[tabpage]
+assert(vim.api.nvim_win_get_width(panel) == vim.o.columns, 'summary must span both diff panes')
+for _, win in ipairs { left, right } do
+  assert(vim.api.nvim_win_get_position(win)[1] + vim.api.nvim_win_get_height(win) < vim.api.nvim_win_get_position(panel)[1],
+    'summary must not overlap either diff pane')
+end
+summary.close(tabpage)
+assert(vim.api.nvim_win_is_valid(left) and vim.api.nvim_win_is_valid(right), 'closing summary must preserve diff panes')
 vim.cmd 'tabclose'
 local wrap = vim.wo.wrap
 vim.wo.wrap = false

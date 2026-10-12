@@ -19,6 +19,7 @@ lifecycle.get_session = function() return { panel = panel } end
 lifecycle.get_panel_view = function() return { data = data } end
 local requests, display, footer = {}, {}, ''
 local patch_version = '1'
+local empty_path
 vim.system = function(args, options, callback)
   if args[1] ~= 'git' or args[4] ~= 'diff' then return original.system(args, options, callback) end
   assert(vim.tbl_contains(args, 'pr-base'))
@@ -28,7 +29,7 @@ vim.system = function(args, options, callback)
     assert(vim.tbl_contains(args, 'pr-head'))
   end
   local path = args[#args]
-  vim.schedule(function() callback { code = 0, stdout = path .. ' patch ' .. patch_version } end)
+  vim.schedule(function() callback { code = 0, stdout = path == empty_path and '' or path .. ' patch ' .. patch_version } end)
   return { kill = function() end }
 end
 ollama.request = function(input, callback)
@@ -90,6 +91,60 @@ wait_for(function() return #requests == 6 end, 'different comparison must regene
 assert(requests[5].killed)
 vim.api.nvim_exec_autocmds('User', { pattern = 'CodeDiffClose', data = { tabpage = tabpage } })
 assert(requests[6].killed, 'closing must cancel adopted/background work')
+
+-- Staying on one file must fill exactly three files ahead, serially.
+data.target_revision = 'pr-head'
+data.status_result.unstaged = {
+  { path = 'd.lua', status = 'M' }, { path = 'e.lua', status = 'M' },
+  { path = 'f.lua', status = 'M' }, { path = 'g.lua', status = 'M' },
+  { path = 'h.lua', status = 'M' },
+}
+choose(1)
+wait_for(function() return #requests == 7 end, 'new current file must generate')
+for index = 1, 4 do
+  local count = 6 + index
+  local path = data.status_result.unstaged[index].path
+  assert(requests[count].input:find(path, 1, true))
+  requests[count].callback('summary ' .. path)
+  if index < 4 then
+    wait_for(function() return #requests == count + 1 end, 'prefetch must continue serially')
+  end
+end
+wait_for(function() return footer == '先読み済み: g.lua' end, 'third prefetch must complete')
+vim.wait(150, function() return #requests > 10 end)
+assert(#requests == 10, 'fourth file ahead must not prefetch')
+assert(display.path == 'd.lua' and display.summary == 'summary d.lua', 'prefetch must not replace current summary')
+
+footer = ''
+choose(1)
+wait_for(function() return footer == '先読み済み: g.lua' end, 'cached prefetch must continue through all three files')
+vim.wait(150, function() return #requests > 10 end)
+assert(#requests == 10, 'cached prefetch must preserve the three-file limit')
+
+-- Moving to the third prefetched file must use its cache and refill ahead.
+choose(4)
+wait_for(function() return display.path == 'g.lua' and display.state == 'Cached' end, 'third prefetched file must hit cache')
+assert(display.summary == 'summary g.lua')
+wait_for(function() return #requests == 11 end, 'cached selection must refill prefetch')
+assert(requests[11].input:find('h.lua', 1, true))
+vim.api.nvim_exec_autocmds('User', { pattern = 'CodeDiffClose', data = { tabpage = tabpage } })
+assert(requests[11].killed, 'closing must cancel extended prefetch')
+
+-- An empty diff consumes one slot but must not stop the remaining prefetch.
+patch_version, empty_path = '4', 'e.lua'
+choose(1)
+wait_for(function() return #requests == 12 end, 'changed current file must generate')
+requests[12].callback('updated D')
+wait_for(function() return #requests == 13 end, 'empty diff must be skipped')
+assert(requests[13].input:find('f.lua', 1, true))
+requests[13].callback('updated F')
+wait_for(function() return #requests == 14 end, 'third file must follow empty diff')
+assert(requests[14].input:find('g.lua', 1, true))
+requests[14].callback('updated G')
+wait_for(function() return footer == '先読み済み: g.lua' end, 'prefetch after empty diff must complete')
+vim.wait(150, function() return #requests > 14 end)
+assert(#requests == 14, 'empty diff must count toward the three-file limit')
+vim.api.nvim_exec_autocmds('User', { pattern = 'CodeDiffClose', data = { tabpage = tabpage } })
 vim.system = original.system
 lifecycle.get_session, lifecycle.get_panel_view = original.get_session, original.get_panel_view
 ollama.request = original.request

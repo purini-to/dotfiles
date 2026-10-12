@@ -8,7 +8,7 @@ end
 vim.loader.enable()
 vim.g.mapleader = ' '
 vim.g.maplocalleader = '\\'
-vim.g.have_nerd_font = false -- ターミナルでNerd Fontを選択したらtrue
+vim.g.have_nerd_font = true -- ターミナル側でもNerd Fontを選択する
 
 -- オプション
 local opt = vim.opt
@@ -178,6 +178,9 @@ if vim.g.have_nerd_font then
   MiniIcons.mock_nvim_web_devicons()
 end
 require('mini.ai').setup { mappings = { around_next = 'aa', inside_next = 'ii' }, n_lines = 500 }
+require('mini.indentscope').setup {
+  mappings = { object_scope = '', object_scope_with_border = '', goto_top = '', goto_bottom = '' }, -- 表示のみ。mini.aiのiiと競合させない
+}
 require('mini.surround').setup()
 local jump2d = require 'mini.jump2d'
 jump2d.setup { mappings = { start_jumping = '' } }
@@ -192,7 +195,9 @@ statusline.section_location = function() return '%2l:%-2v' end
 -- Herdrにエージェント管理を任せ、Neovimはレビュー・編集に集中する。
 vim.pack.add { gh 'esmuellert/codediff.nvim', gh 'folke/trouble.nvim', gh 'stevearc/oil.nvim', gh 'MeanderingProgrammer/render-markdown.nvim' }
 require 'dotfiles.codediff'
+require('dotfiles.local_llm').setup()
 require('dotfiles.codediff_ai').setup()
+require('dotfiles.codediff_review').setup()
 require('trouble').setup {
   icons = vim.g.have_nerd_font and {} or {
     folder_closed = '+ ', folder_open = '- ', indent = { fold_open = '- ', fold_closed = '+ ' },
@@ -205,12 +210,15 @@ require('trouble').setup {
 require('oil').setup {
   columns = vim.g.have_nerd_font and { 'icon' } or {},
   watch_for_changes = true,
+  view_options = { show_hidden = true },
   keymaps = {
     ['<C-h>'] = false, ['<C-l>'] = false, ['<C-p>'] = false,
     ['gp'] = 'actions.preview', ['gr'] = 'actions.refresh',
   },
 }
+km('n', '<leader>am', function() require('dotfiles.local_llm').select() end, { desc = 'Local LLM: Select model' })
 km('n', '<leader>gd', '<cmd>CodeDiff<CR>', { desc = 'Git: Review changes' })
+km('n', '<leader>gp', function() require('dotfiles.codediff_review').pick() end, { desc = 'Git: Review GitHub PR (pick)' })
 km('n', '<leader>xx', '<cmd>Trouble diagnostics toggle<CR>', { desc = 'Diagnostics: All' })
 km('n', '<leader>xX', '<cmd>Trouble diagnostics toggle filter.buf=0<CR>', { desc = 'Diagnostics: Buffer' })
 km('n', '<leader>xq', '<cmd>Trouble qflist toggle<CR>', { desc = 'Diagnostics: Quickfix' })
