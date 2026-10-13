@@ -56,7 +56,7 @@ function M.date(c)
 end
 
 local function author(c, item)
-  if item.kind == 'draft' then return '下書き' end
+  if item.kind == 'draft' then return 'あなた' end
   return '@' .. (c.user and c.user.login or 'unknown')
 end
 
@@ -155,7 +155,7 @@ local function build(item, width, open_resolved)
     lines[#lines + 1] = row({})
   end
   lines[#lines + 1] = rule('├', '┤')
-  local hint = item.kind == 'draft' and 'ge 編集 · gd 削除' or ('gR 返信 · gx ' .. (item.resolved and '再開' or '解決'))
+  local hint = item.kind == 'draft' and 'ge 編集 · gd 削除 · レビュー送信まで未投稿' or ('gR 返信 · gx ' .. (item.resolved and '再開' or '解決'))
   for _, segs in ipairs(markdown.render(hint, inner)) do
     for _, seg in ipairs(segs) do seg[2] = 'CodeDiffReviewCardMeta' end
     lines[#lines + 1] = row(segs, 'CodeDiffReviewCardHeader')

@@ -325,6 +325,18 @@ local function assist_context(ctx, side, line, start_line)
   return table.concat(parts, '\n')
 end
 
+local function comment_options(ctx, pos)
+  local context = assist_context(ctx, pos.side, pos.line, pos.start_line)
+  local lines = vim.split(context, '\n', { plain = true })
+  table.insert(lines, 5, '```diff')
+  lines[#lines + 1] = '```'
+  return {
+    context = lines, context_title = ' ' .. ctx.path .. ' · 対象の差分 ',
+    save_label = '下書き保存',
+    assist = function(text, done) return assist.request('comment', context, text, done) end,
+  }
+end
+
 local function create(ctx, pos)
   local file = file_info(ctx, ctx.path)
   if not file then return warn 'このファイルはGitHubのPRに含まれていません' end
@@ -333,8 +345,7 @@ local function create(ctx, pos)
   if not patch.supports(valid, pos.side, pos.line, pos.start_line) then
     return warn 'GitHubのPR差分でコメントできない行です（変更箇所の周辺のみ可）'
   end
-  local context = assist_context(ctx, pos.side, pos.line, pos.start_line)
-  ui.input({ assist = function(text, done) return assist.request('comment', context, text, done) end }, function(body)
+  ui.input(comment_options(ctx, pos), function(body)
     if not body then return end
     sequence = sequence + 1
     table.insert(ctx.drafts, {
@@ -374,8 +385,9 @@ function M.edit()
   local pos = ctx and position(ctx)
   if not pos then return end
   select_entry(entries_at(ctx, pos).drafts, '下書きを選択', function(draft)
-    local context = assist_context(ctx, draft.side, draft.line, draft.start_line)
-    ui.input({ initial = draft.body, assist = function(text, done) return assist.request('comment', context, text, done) end }, function(body)
+    local opts = comment_options(ctx, draft)
+    opts.initial, opts.title = draft.body, ' コメントを編集 · 下書き '
+    ui.input(opts, function(body)
       if not body then return end
       draft.body = body
       save(ctx)
@@ -417,11 +429,11 @@ function M.toggle_resolved()
 end
 
 local function thread_lines(thread)
-  local lines = { string.format('%s %s', state_icon(thread), table.concat(vim.tbl_map(function(b) return b[1] end, card.badges(thread)), ' ')) }
+  local lines = { table.concat(vim.tbl_map(function(b) return b[1] end, card.badges(thread)), ' '), '' }
   for _, c in ipairs(thread.comments) do
-    vim.list_extend(lines, { string.format('@%s  %s', c.user.login, card.date(c)) })
-    vim.list_extend(lines, vim.tbl_map(function(l) return '  ' .. l end, vim.split(c.body, '\n', { plain = true })))
-    lines[#lines + 1] = ''
+    vim.list_extend(lines, { string.format('### @%s · %s', c.user.login, card.date(c)), '' })
+    vim.list_extend(lines, vim.split(c.body, '\n', { plain = true }))
+    vim.list_extend(lines, { '', '---', '' })
   end
   return lines
 end
@@ -463,6 +475,7 @@ function M.reply()
     if thread.line then context = assist_context(ctx, thread.side, thread.line, thread.start_line) .. '\n\nスレッド:\n' .. context end
     ui.input({
       title = ' 返信（GitHubへ即時投稿） ',
+      context = thread_lines(thread), context_title = ' ' .. thread.path .. ' · 会話 ', save_label = '返信を投稿',
       assist = function(text, done) return assist.request('reply', context, text, done) end,
     }, function(body)
       if not body then return end

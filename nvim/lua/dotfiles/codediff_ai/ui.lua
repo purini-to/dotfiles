@@ -32,9 +32,10 @@ local function fit(tabpage)
       remaining = math.min(remaining or height, height)
     end
   end
-  local max_height = math.max(1, available + (remaining or 8) - 8)
+  local max_height = math.max(1, available + (remaining or 1) - 1)
   local rendered = vim.api.nvim_win_text_height(win, {}).all
-  local height = math.min(math.max(1, rendered), max_height)
+  local winbar = vim.wo[win].winbar ~= '' and 1 or 0
+  local height = math.min(math.max(1, rendered + winbar), max_height)
   if height ~= available then vim.api.nvim_win_set_height(win, height) end
 end
 
@@ -44,17 +45,24 @@ vim.api.nvim_create_autocmd('VimResized', {
 })
 
 function M.show(tabpage, path, summary, state)
-  M.close(tabpage)
   if not vim.api.nvim_tabpage_is_valid(tabpage) or tabpage ~= vim.api.nvim_get_current_tabpage() then return end
   local lines = vim.split(summary or state, '\n', { trimempty = true })
-  local buf = vim.api.nvim_create_buf(false, true)
-  vim.bo[buf].bufhidden = 'wipe'
-  vim.b[buf].codediff_ai_summary = true
+  local win = M.windows[tabpage]
+  local buf
+  if win and vim.api.nvim_win_is_valid(win) then
+    buf = vim.api.nvim_win_get_buf(win)
+  else
+    buf = vim.api.nvim_create_buf(false, true)
+    vim.bo[buf].bufhidden = 'wipe'
+    vim.b[buf].codediff_ai_summary = true
+    win = vim.api.nvim_open_win(buf, false, { split = 'below', win = -1, height = 1, style = 'minimal' })
+    M.windows[tabpage] = win
+  end
+  vim.bo[buf].modifiable = true
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
   vim.bo[buf].modifiable = false
-  local win = vim.api.nvim_open_win(buf, false, {
-    split = 'below', win = -1, height = 1, style = 'minimal',
-  })
+  if vim.b[buf].codediff_ai_path ~= path then vim.api.nvim_win_set_cursor(win, { 1, 0 }) end
+  vim.b[buf].codediff_ai_path = path
   vim.wo[win].winfixheight = true
   vim.wo[win].winbar = ' AI Summary · ' .. path:gsub('%%', '%%%%') .. ' '
   vim.wo[win].wrap = true
@@ -62,7 +70,6 @@ function M.show(tabpage, path, summary, state)
   vim.wo[win].linebreak = false
   vim.wo[win].conceallevel = 2
   vim.wo[win].concealcursor = 'nvic'
-  M.windows[tabpage] = win
   M.status(tabpage, state)
   vim.bo[buf].filetype = 'markdown'
   -- Use Neovim's actual wrapped rows rather than byte/character estimates.

@@ -1,19 +1,18 @@
 local adapter = require 'dotfiles.codediff_review.adapter'
+local Popup = require 'nui.popup'
+local Layout = require 'nui.layout'
 local M = {}
 local namespace = vim.api.nvim_create_namespace 'codediff-review-comments'
 
 function M.notify(text, level) vim.notify('codediff-review: ' .. text, level or vim.log.levels.INFO) end
 
-local function float(buf, opts)
-  local width = math.max(24, math.min(opts.width, vim.o.columns - 8))
-  local height = math.max(2, math.min(opts.height, vim.o.lines - 8))
-  local win = vim.api.nvim_open_win(buf, opts.enter ~= false, vim.tbl_extend('force', {
-    relative = 'editor', row = math.max(1, math.floor((vim.o.lines - height) / 2)),
-    col = math.max(1, math.floor((vim.o.columns - width) / 2)),
-    width = width, height = height, style = 'minimal', border = 'rounded',
-  }, opts.win))
-  vim.wo[win].wrap = true
-  return win
+local function popup(title, enter)
+  return Popup {
+    enter = enter, focusable = true,
+    border = { style = 'rounded', text = { top = title, top_align = 'left' } },
+    buf_options = { filetype = 'markdown', bufhidden = 'wipe' },
+    win_options = { wrap = true, linebreak = false, conceallevel = 2, concealcursor = 'nvic', winhighlight = 'Normal:NormalFloat,FloatBorder:FloatBorder' },
+  }
 end
 
 -- 複数行入力。<C-s>か<CR>(ノーマル)で確定、qで取消。callbackには確定した本文かnilを渡す。
@@ -23,45 +22,41 @@ end
 --   context があれば入力欄の上に読み取り専用の一覧を出す（<C-d>/<C-u> でスクロール）。
 function M.input(opts, callback)
   local llm = require 'dotfiles.local_llm'
-  local buf = vim.api.nvim_create_buf(false, true)
-  vim.bo[buf].bufhidden = 'wipe'
+  local editor = popup(opts.title or ' コメントを書く · 下書き ', true)
+  local buf = editor.bufnr
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, vim.split(opts.initial or '', '\n', { plain = true }))
-  vim.bo[buf].filetype = 'markdown'
   local function idle_footer()
-    local text = ' Ctrl-S: ' .. (opts.save_label or '保存') .. ' | q: 取消'
-    if opts.assist then text = text .. ' | Ctrl-G: AI補助 (' .. llm.model .. ')' end
-    if opts.context then text = text .. ' | Ctrl-D/U: 一覧スクロール' end
+    local text = ' ^S: ' .. (opts.save_label or '下書き保存') .. ' · ^P: Preview · q: 取消'
+    if opts.assist then text = text .. ' · ^G: AI' end
     return text .. ' '
   end
-  local width, height = opts.context and 100 or 76, opts.context and 6 or 7
-  local win_opts = { title = opts.title or ' PRコメント ', title_pos = 'center', footer = idle_footer(), footer_pos = 'center' }
-  local context_win
+  editor.border:set_text('bottom', idle_footer(), 'left')
+  local context
   if opts.context then
-    local context_buf = vim.api.nvim_create_buf(false, true)
-    vim.api.nvim_buf_set_lines(context_buf, 0, -1, false, opts.context)
-    vim.bo[context_buf].modifiable = false
-    vim.bo[context_buf].bufhidden = 'wipe'
-    vim.bo[context_buf].filetype = 'markdown'
-    vim.b[context_buf].codediff_review_markdown = true -- render-markdown.nvimで描画する
-    local w = math.max(24, math.min(width, vim.o.columns - 8))
-    local context_height = math.max(3, math.min(#opts.context, vim.o.lines - height - 10))
-    local top = math.max(1, math.floor((vim.o.lines - (context_height + height + 4)) / 2))
-    local left = math.max(1, math.floor((vim.o.columns - w) / 2))
-    context_win = float(context_buf, {
-      width = w, height = context_height, enter = false,
-      win = { row = top, col = left, title = opts.context_title or ' 内容 ', title_pos = 'center' },
-    })
-    win_opts.row, win_opts.col = top + context_height + 2, left
+    context = popup(opts.context_title or ' 会話 · Ctrl-D/U: スクロール ', false)
+    vim.api.nvim_buf_set_lines(context.bufnr, 0, -1, false, opts.context)
+    vim.bo[context.bufnr].modifiable = false
+    vim.b[context.bufnr].codediff_review_markdown = true
   end
-  local win = float(buf, { width = width, height = height, win = win_opts })
-  local finished, job = false, nil
+  local function geometry()
+    local height = math.max(context and 6 or 3, math.min(context and (#opts.context + 12) or 11, vim.o.lines - 4))
+    local boxes = { Layout.Box(editor, { size = context and math.min(9, height - 3) or height }) }
+    if context then table.insert(boxes, 1, Layout.Box(context, { grow = 1 })) end
+    return { relative = 'editor', position = '50%', size = { width = math.max(1, math.min(context and 100 or 84, vim.o.columns - 4)), height = height } }, Layout.Box(boxes, { dir = 'col' })
+  end
+  local layout = Layout(geometry())
+  layout:mount()
+  local win = editor.winid
+  vim.wo[win].conceallevel = 0 -- WriteではMarkdown記号を隠さない。Previewだけ描画する。
+  local finished, job, preview, resize = false, nil, nil, nil
   local function finish(value)
     if finished then return end
     finished = true
+    vim.api.nvim_del_autocmd(resize)
     if job then job:kill(15) end
     vim.cmd.stopinsert()
-    if vim.api.nvim_win_is_valid(win) then vim.api.nvim_win_close(win, true) end
-    if context_win and vim.api.nvim_win_is_valid(context_win) then vim.api.nvim_win_close(context_win, true) end
+    if preview then preview() end
+    layout:unmount()
     callback(value)
   end
   local function text() return vim.trim(table.concat(vim.api.nvim_buf_get_lines(buf, 0, -1, false), '\n')) end
@@ -73,11 +68,11 @@ function M.input(opts, callback)
   local function assist()
     if not opts.assist or job then return end
     local tick = vim.api.nvim_buf_get_changedtick(buf)
-    vim.api.nvim_win_set_config(win, { footer = ' AI生成中… (' .. llm.model .. ') ', footer_pos = 'center' })
+    editor.border:set_text('bottom', ' AI生成中… (' .. llm.model .. ') · q: 取消 ', 'left')
     job = opts.assist(text(), function(result, err)
       job = nil
       if finished then return end
-      vim.api.nvim_win_set_config(win, { footer = idle_footer(), footer_pos = 'center' })
+      editor.border:set_text('bottom', idle_footer(), 'left')
       if not result then return M.notify(err or 'AI補助に失敗しました', vim.log.levels.WARN) end
       if vim.api.nvim_buf_get_changedtick(buf) ~= tick then
         return M.notify('生成中に本文が編集されたため、AIの結果は適用しません。Ctrl-G で再生成できます', vim.log.levels.WARN)
@@ -87,31 +82,54 @@ function M.input(opts, callback)
   end
   vim.keymap.set({ 'i', 'n' }, '<C-s>', save, { buffer = buf, silent = true })
   vim.keymap.set({ 'i', 'n' }, '<C-g>', assist, { buffer = buf, silent = true })
+  vim.keymap.set({ 'i', 'n' }, '<C-p>', function()
+    vim.cmd.stopinsert()
+    preview = M.preview(vim.split(text(), '\n', { plain = true }), { title = ' Preview · Ctrl-P: 編集へ戻る ' })
+  end, { buffer = buf, silent = true })
   if not opts.context then vim.keymap.set('n', '<CR>', save, { buffer = buf, silent = true }) end
   vim.keymap.set('n', 'q', function() finish(nil) end, { buffer = buf, silent = true })
-  if context_win then
+  if context then
+    local context_win = context.winid
     for key, scroll in pairs { ['<C-d>'] = vim.keycode '<C-d>', ['<C-u>'] = vim.keycode '<C-u>' } do
       vim.keymap.set('n', key, function()
         if vim.api.nvim_win_is_valid(context_win) then vim.api.nvim_win_call(context_win, function() vim.cmd.normal { scroll, bang = true } end) end
       end, { buffer = buf, silent = true })
     end
+    vim.keymap.set('n', 'q', function() finish(nil) end, { buffer = context.bufnr, silent = true })
+    vim.api.nvim_create_autocmd('WinClosed', { pattern = tostring(context_win), once = true, callback = function() finish(nil) end })
   end
+  resize = vim.api.nvim_create_autocmd('VimResized', { callback = function() layout:update(geometry()) end })
   vim.api.nvim_create_autocmd('WinClosed', { pattern = tostring(win), once = true, callback = function() finish(nil) end })
   vim.cmd.startinsert()
 end
 
-function M.preview(lines)
+function M.preview(lines, opts)
   if #lines == 0 then return M.notify 'この行にコメントはありません' end
-  local buf = vim.api.nvim_create_buf(false, true)
+  opts = opts or {}
+  local view = popup(opts.title or ' レビューコメント ', true)
+  local buf = view.bufnr
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
   vim.bo[buf].modifiable = false
-  vim.bo[buf].bufhidden = 'wipe'
-  vim.bo[buf].filetype = 'markdown'
   vim.b[buf].codediff_review_markdown = true -- render-markdown.nvimで描画する
-  local win = float(buf, { width = 90, height = #lines, win = { title = ' レビューコメント ' } })
-  for _, key in ipairs { 'q', '<Esc>' } do
-    vim.keymap.set('n', key, function() vim.api.nvim_win_close(win, true) end, { buffer = buf, nowait = true })
+  view.border:set_text('bottom', ' q / Esc: 閉じる ', 'left')
+  local function geometry()
+    return { relative = 'editor', position = '50%', size = { width = math.max(1, math.min(96, vim.o.columns - 4)), height = math.max(1, math.min(#lines, vim.o.lines - 6)) } }
   end
+  view:update_layout(geometry())
+  view:mount()
+  local resize = vim.api.nvim_create_autocmd('VimResized', { callback = function() view:update_layout(geometry()) end })
+  local closed = false
+  local function close()
+    if closed then return end
+    closed = true
+    vim.api.nvim_del_autocmd(resize)
+    view:unmount()
+  end
+  for _, key in ipairs { 'q', '<Esc>', '<C-p>' } do
+    vim.keymap.set('n', key, close, { buffer = buf, nowait = true })
+  end
+  vim.api.nvim_create_autocmd('WinClosed', { pattern = tostring(view.winid), once = true, callback = close })
+  return close
 end
 
 function M.clear(bufs)

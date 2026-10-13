@@ -490,6 +490,7 @@ local call = assist_calls[#assist_calls]
 assert(call.kind == 'comment' and call.text == '途中まで書いた文', '入力中の本文を渡す')
 assert(call.context:find('PR #5', 1, true) and call.context:find('ファイル: new.lua', 1, true) and call.context:find('対象: 変更後 の L2-4', 1, true), call.context)
 assert(call.context:find('差分:', 1, true) and call.context:find('>+', 1, true) and call.context:find('| c', 1, true), '差分（対象行つき）を渡す: ' .. call.context)
+assert(comment_input.save_label == '下書き保存' and table.concat(comment_input.context, '\n'):find('```diff', 1, true), 'コメント入力には対象差分と下書き保存を表示する')
 core.submit 'comment'
 local summary = inputs[#inputs]
 assert(summary.allow_empty and summary.assist and summary.save_label == '送信', '総評は空でも送信でき、AI補助つき')
@@ -627,6 +628,43 @@ vim.api.nvim_feedkeys(vim.keycode '<C-s>', 'x', false)
 assert(plain_saved == 'unset', '通常のコメントは空では保存できない')
 vim.api.nvim_feedkeys(vim.keycode '<Esc>q', 'x', false)
 assert(plain_saved == nil)
+
+-- NUI: 会話と入力を併設。Previewは本文を保持し、resize・外部closeでも残骸を残さない。
+local before_windows = #vim.api.nvim_list_wins()
+local columns, screen_lines = vim.o.columns, vim.o.lines
+local cancelled, killed = 'unset', false
+real_ui.input({
+  initial = '**レビュー本文**', context = { '### @author', '', '会話の本文' },
+  assist = function() return { kill = function() killed = true end } end,
+}, function(value) cancelled = value end)
+local editor_win = vim.api.nvim_get_current_win()
+input_buf = vim.api.nvim_get_current_buf()
+local context_buf
+for _, w in ipairs(vim.api.nvim_list_wins()) do
+  local b = vim.api.nvim_win_get_buf(w)
+  if vim.b[b].codediff_review_markdown then context_buf = b end
+end
+assert(context_buf and vim.api.nvim_buf_get_lines(context_buf, 0, -1, false)[1] == '### @author')
+assert(not vim.bo[context_buf].modifiable, '会話は読み取り専用')
+vim.api.nvim_feedkeys(vim.keycode '<Esc>', 'x', false)
+vim.fn.maparg('<C-p>', 'n', false, true).callback()
+local preview_buf = vim.api.nvim_get_current_buf()
+assert(preview_buf ~= input_buf and vim.b[preview_buf].codediff_review_markdown and not vim.bo[preview_buf].modifiable, 'Previewは別の読み取り専用Markdownバッファ')
+assert(vim.api.nvim_buf_get_lines(preview_buf, 0, -1, false)[1] == '**レビュー本文**')
+vim.api.nvim_feedkeys(vim.keycode '<C-p>', 'x', false)
+assert(vim.api.nvim_get_current_buf() == input_buf and not vim.api.nvim_buf_is_valid(preview_buf), 'Previewから編集へ戻る')
+vim.o.columns, vim.o.lines = 48, 18
+vim.api.nvim_exec_autocmds('VimResized', {})
+local resized = vim.api.nvim_win_get_config(editor_win)
+assert(resized.width <= 44 and resized.height >= 1, '狭い端末に収める')
+assert(vim.api.nvim_buf_get_lines(input_buf, 0, -1, false)[1] == '**レビュー本文**', 'resizeで本文を失わない')
+vim.api.nvim_feedkeys(vim.keycode '<C-g>', 'x', false)
+vim.api.nvim_win_close(editor_win, true)
+assert(cancelled == nil and killed, '外部closeは取消し、生成も止める')
+assert(not vim.api.nvim_buf_is_valid(input_buf) and not vim.api.nvim_buf_is_valid(context_buf))
+assert(#vim.api.nvim_list_wins() == before_windows, 'NUIの会話・枠も閉じる')
+vim.o.columns, vim.o.lines = columns, screen_lines
+
 vim.system = system_backup
 vim.fn.stdpath = stdpath
 
