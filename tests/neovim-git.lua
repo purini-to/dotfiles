@@ -11,6 +11,9 @@ local mode = 'success'
 llm.chat = function(opts, callback)
   calls = calls + 1
   assert(opts.system:find('秘密値を引用しない', 1, true))
+  assert(opts.num_ctx == 4096 and opts.num_predict == 160)
+  assert(#opts.user <= 6000, 'commit input must stay bounded')
+  assert(vim.str_utfindex(opts.user, 'utf-32') >= 0, 'excerpts must preserve UTF-8')
   inputs[#inputs + 1] = opts.user
   if mode == 'hold' then
     pending = callback
@@ -23,12 +26,29 @@ llm.chat = function(opts, callback)
 end
 
 local result
-local large = string.rep('変更内容\n', 4000)
-local chunks = require('dotfiles.codediff_ai.ollama').chunks(large)
+local function patch(path, content)
+  return 'diff --git a/' .. path .. ' b/' .. path .. '\n--- a/' .. path .. '\n+++ b/' .. path .. '\n@@ -1 +1 @@\n' .. content .. '\n'
+end
+local large = ' first.lua | 4000 +\n last.lua | 4000 +\n package-lock.json | 4000 +\n 3 files changed\n\n'
+  .. patch('first.lua', string.rep('+最初の変更\n', 4000))
+  .. patch('last.lua', string.rep('+最後の変更\n', 4000))
+  .. patch('package-lock.json', '+lock-secret-detail')
 git.request(large, function(message) result = message end)
 assert(vim.wait(3000, function() return result ~= nil end))
-assert(calls == #chunks + 1, 'all chunks must be summarized, then consolidated')
-assert(table.concat(vim.list_slice(inputs, 1, #chunks)) == large, 'no diff content may be dropped')
+assert(calls == 1, 'large diffs must use exactly one inference')
+assert(inputs[1]:find('+最初の変更', 1, true) and inputs[1]:find('+最後の変更', 1, true), 'each source file must get an excerpt')
+assert(inputs[1]:find('package-lock.json', 1, true) and not inputs[1]:find('lock-secret-detail', 1, true))
+assert(inputs[1]:find('[省略]', 1, true), 'truncation must be explicit')
+for _, path in ipairs({ 'dist/app.js', 'nested/build/app.js', 'generated/types.lua', 'app.min.js', 'app.js.map', 'my dir/package-lock.json' }) do
+  git.request(patch(path, '+generated-detail'), function() end)
+  assert(not inputs[#inputs]:find('generated-detail', 1, true), 'generated details must be omitted')
+end
+git.request('diff --git "a/dist/a\\tb.js" "b/dist/a\\tb.js"\n--- "a/dist/a\\tb.js"\n+++ "b/dist/a\\tb.js"\n+generated-detail\n', function() end)
+assert(not inputs[#inputs]:find('generated-detail', 1, true), 'quoted generated paths must be recognized')
+git.request(string.rep('巨大な変更一覧\n', 4000), function() end)
+assert(#inputs[#inputs] <= 6000)
+git.request(string.rep(patch('many.lua', '+detail'), 300), function() end)
+assert(inputs[#inputs]:find('ファイル数が多い', 1, true))
 mode = 'hold'
 local request = git.request(large, function() error 'cancelled request completed' end)
 request:kill(15)
@@ -75,6 +95,7 @@ mode = 'success'
 git.generate()
 wait_notice('案を挿入しました')
 assert(inputs[1]:find('+staged-only', 1, true))
+assert(inputs[1]:find('file.txt%s+|'), 'staged change statistics must be included')
 assert(not inputs[1]:find('unstaged-only', 1, true))
 assert(not inputs[1]:find('untracked-only', 1, true))
 assert(vim.deep_equal(vim.api.nvim_buf_get_lines(buf, 0, -1, false), {

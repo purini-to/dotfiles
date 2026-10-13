@@ -192,6 +192,22 @@ statusline.setup { use_icons = vim.g.have_nerd_font }
 ---@diagnostic disable-next-line: duplicate-set-field -- 行・列表示を簡素化するための意図的な上書き
 statusline.section_location = function() return '%2l:%-2v' end
 
+-- Neo-tree: 左側のファイルツリー。Oilのディレクトリ編集は維持する。
+vim.pack.add {
+  gh 'MunifTanjim/nui.nvim',
+  { src = gh 'nvim-neo-tree/neo-tree.nvim', version = vim.version.range '3.*' },
+}
+require('neo-tree').setup {
+  window = { position = 'left', width = 35 },
+  filesystem = {
+    hijack_netrw_behavior = 'disabled',
+    follow_current_file = { enabled = true },
+    filtered_items = { hide_dotfiles = false },
+    use_libuv_file_watcher = true,
+  },
+}
+km('n', '<leader>e', '<cmd>Neotree toggle filesystem left<CR>', { desc = 'Explorer: Toggle file tree' })
+
 -- Herdrにエージェント管理を任せ、Neovimはレビュー・編集に集中する。
 vim.pack.add { gh 'esmuellert/codediff.nvim', gh 'folke/trouble.nvim', gh 'stevearc/oil.nvim', gh 'MeanderingProgrammer/render-markdown.nvim' }
 require 'dotfiles.codediff'

@@ -41,6 +41,7 @@ Leaderはスペース。Catppuccin Macchiato、2スペース、`jj`/`っj`、表
 `mini.indentscope`でカーソル位置のインデント範囲を縦線表示する。表示のみ有効にし、専用キーマップは無効。
 
 - `<Space>sf`: ファイル検索
+- `<Space>e`: Neo-treeの左側ファイルツリーを表示 / 非表示。現在ファイルに追従し、外部変更も監視する
 - `<Space>sg`: 全文検索
 - `<Space>sh`: ヘルプ検索
 - `<Space><Space>`: バッファ切替
@@ -72,7 +73,7 @@ Leaderはスペース。Catppuccin Macchiato、2スペース、`jj`/`っj`、表
 
 `<Space>gg`で現在ファイルのリポジトリ（ファイルがなければ作業ディレクトリ）を開く。ファイル一覧で`Space`でstage切替、`C`（大文字）でNeovimのコミット編集画面を開く。`Ctrl-g`（入力・ノーマル両モード）または`:GitCommitAI`でstage済み差分から日本語のメッセージ案を生成する。確認・修正して`:wq`でcommit、`:cq`で取消。lazygitへ戻って`P`（大文字）でpush、`q`で閉じる。通常の`c`はlazygit内の手入力用。
 
-生成には共通のローカルOllama設定を使い、`git diff --cached`だけを送る。部分stageではstageされた内容だけが対象で、unstaged・未追跡の内容は送らない。長い差分は全体を分割要約して統合する（時間がかかる）。バイナリの内容は送らず、変更情報だけを渡す。秘密値を含む差分もローカルへ送るため、生成結果は必ず確認する。生成中に本文やstage済み差分が変わった場合は適用しない。`:GitCommitAICancel`で中止、適用後は`u`で戻せる。自動commit・自動pushはしない。
+生成には共通のローカルOllama設定を使い、`git diff --cached`の変更一覧と差分抜粋だけを送る。部分stageではstageされた内容だけが対象で、unstaged・未追跡の内容は送らない。未変更の周辺行は除き、入力は最大6000バイト（変更一覧は最大1500バイト）、差分は各ファイル先頭から均等配分する。主要なlockfile、`dist/`・`build/`・`generated/`配下、minify済みJS/CSS・ソースマップは詳細を省く。省略は入力に明示し、推論は常に1回（コンテキスト4096、出力上限160トークン）。大きな変更の細部は拾えないため、必要ならcommitを分ける。バイナリの内容は送らず、変更情報だけを渡す。秘密値を含む差分もローカルへ送るため、生成結果は必ず確認する。生成中に本文やstage済み差分が変わった場合は適用しない。`:GitCommitAICancel`で中止、適用後は`u`で戻せる。自動commit・自動pushはしない。CodeDiff・PRレビューの生成設定は変更しない。
 
 lazygitはNeovim標準ターミナルで起動し、コミット編集時には同じ設定の子Neovimを起動する。Git editorはそのプロセスだけ上書きし、既存のグローバルGit設定は変更しない。追加プラグイン・lazygit設定ファイルは不要（`link.sh`の既存Luaリンクで有効になる）。
 lazygitの罫線・文字の描画崩れを防ぐため、起動中は`ambiwidth=single`にし、最後のlazygit終了時に元へ戻す。この設定はNeovim全体に作用するため、起動中は他のタブにも適用される。
@@ -118,6 +119,12 @@ nvim --headless '+lua assert(vim.fn.has("nvim-0.12") == 1); assert(vim.g.colors_
 nvim --headless '+lua vim.schedule(function() local ok, err = pcall(dofile, "tests/neovim-review.lua"); if not ok then print(err); vim.cmd("cquit 1") end end)'
 ```
 
+ファイルツリーのチェック:
+
+```sh
+nvim --headless '+lua local ok, err = pcall(dofile, "tests/neovim-explorer.lua"); if not ok then print(err); vim.cmd("cquit 1") end' +qa
+```
+
 PRレビューのチェック（`gh`・GitHub・CodeDiff本体は不要）:
 
 ```sh
@@ -133,4 +140,4 @@ nvim --headless '+lua local ok, err = pcall(dofile, "tests/neovim-codediff-prefe
 nvim --headless -u NONE -l tests/neovim-git.lua
 ```
 
-プラグイン公式: [CodeDiff](https://github.com/esmuellert/codediff.nvim)・[Trouble](https://github.com/folke/trouble.nvim)・[Oil](https://github.com/stevearc/oil.nvim)
+プラグイン公式: [CodeDiff](https://github.com/esmuellert/codediff.nvim)・[Trouble](https://github.com/folke/trouble.nvim)・[Oil](https://github.com/stevearc/oil.nvim)・[Neo-tree](https://github.com/nvim-neo-tree/neo-tree.nvim)

@@ -39,13 +39,18 @@ for _, win in ipairs { left, right, left, right } do
 end
 local summary = require 'dotfiles.codediff_ai.ui'
 local tabpage = vim.api.nvim_get_current_tabpage()
-summary.show(tabpage, 'init.lua', string.rep('要約\n', 20), 'Ready')
+summary.show(tabpage, 'nvim/init.lua', string.rep('要約\n', 20), 'Ready')
 local panel = summary.windows[tabpage]
+assert(vim.wo[panel].winbar == ' AI Summary · nvim/init.lua ', 'summary must show repository-relative path')
 assert(vim.api.nvim_win_get_width(panel) == vim.o.columns, 'summary must span both diff panes')
 for _, win in ipairs { left, right } do
   assert(vim.api.nvim_win_get_position(win)[1] + vim.api.nvim_win_get_height(win) < vim.api.nvim_win_get_position(panel)[1],
     'summary must not overlap either diff pane')
 end
+summary.show(tabpage, 'other/init.lua', '要約', 'Ready')
+assert(vim.wo[summary.windows[tabpage]].winbar == ' AI Summary · other/init.lua ', 'same filenames must remain distinguishable')
+summary.show(tabpage, 'nvim/100%/init.lua', '要約', 'Ready')
+assert(vim.wo[summary.windows[tabpage]].winbar == ' AI Summary · nvim/100%%/init.lua ', 'summary path must escape statusline percent signs')
 summary.close(tabpage)
 assert(vim.api.nvim_win_is_valid(left) and vim.api.nvim_win_is_valid(right), 'closing summary must preserve diff panes')
 vim.cmd 'tabclose'

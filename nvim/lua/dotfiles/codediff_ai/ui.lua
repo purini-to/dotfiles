@@ -56,7 +56,7 @@ function M.show(tabpage, path, summary, state)
     split = 'below', win = -1, height = 1, style = 'minimal',
   })
   vim.wo[win].winfixheight = true
-  vim.wo[win].winbar = ' AI Summary · ' .. vim.fn.fnamemodify(path, ':t'):gsub('%%', '%%%%') .. ' '
+  vim.wo[win].winbar = ' AI Summary · ' .. path:gsub('%%', '%%%%') .. ' '
   vim.wo[win].wrap = true
   -- Word wrapping leaves large gaps in Japanese text mixed with paths/code.
   vim.wo[win].linebreak = false
