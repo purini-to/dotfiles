@@ -184,7 +184,7 @@ function M.setup()
     end
     vim.notify('CodeDiff AI ' .. (M.enabled and 'enabled' or 'disabled'))
   end, { desc = 'CodeDiff AI: Toggle summaries' })
-  vim.keymap.set('n', '<leader>as', function()
+  vim.keymap.set('n', '<leader>aS', function()
     local tabpage = vim.api.nvim_get_current_tabpage()
     local panel = require('codediff.ui.lifecycle').get_panel_view(tabpage)
     local selected = panel and panel.data.current_selection

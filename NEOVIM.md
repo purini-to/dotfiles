@@ -58,7 +58,7 @@ Leaderはスペース。Catppuccin Macchiato、2スペース、`jj`/`っj`、表
 - `<Space>gd`: CodeDiffで変更ファイルを一覧・比較。外部変更にも追従する
 - `<Space>gg` / `:LazyGit`: lazygitを専用タブで開き、stage・commit・pushする
 - `<Space>at`: CodeDiffのローカルAI要約を有効 / 無効にする
-- `<Space>as`: CodeDiffの現在ファイル要約を再生成する
+- `<Space>aS`: CodeDiffの現在ファイル要約を再生成する（大文字S）
 - `:CodeDiff --staged`: ステージ済み変更を比較
 - `:CodeDiff origin/main...HEAD`: 分岐点からHEADまでの変更を比較（比較先はプロジェクトに合わせる）
 - `<Space>gp` / `:CodeDiffReview <PR番号>`: GitHub PRをCodeDiffで開いてレビュー。詳細は下記
@@ -68,6 +68,22 @@ Leaderはスペース。Catppuccin Macchiato、2スペース、`jj`/`っj`、表
 - `<C-p>`: Telescopeのファイル検索（ノーマルモードのみ）
 - `<Space>ap`: 作業ディレクトリからの相対パスと行番号をクリップボードへコピー
 - 選択モードの`<Space>ac`: 選択コードをクリップボードへコピー
+
+### Herdrへコンテキストを渡す
+
+Herdr内でNeovimを起動し、同じタブにClaude CodeまたはOpenCodeを配置する。
+
+- `<Space>af`: ファイルの絶対パス・カーソル行を渡す
+- `<Space>as`: 現在の関数・クラスの名前、種類、定義範囲を渡す
+- `<Space>ad`: シンボル情報＋関連Diagnostics（重要度順、最大5件）
+- `<Space>ac`: シンボル情報＋コード本文（ノーマルモード）
+- 選択モードの`<Space>ar`: 選択範囲＋選択コード（文字・行・矩形選択に対応）
+
+入力待ち（idle / done）のエージェントから、左隣→上隣→同じタブの候補選択の順で決める。残り1候補なら自動選択する。別タブ・別ワークスペース、実行中・承認待ちのエージェントには送らない。送信直前にもエージェントを再確認する。改行はBracketed Pasteで本文として挿入し、Enter・自動実行・フォーカス移動はしない（送信先のBracketed Paste対応が必要）。既存の入力を消さず追記するので、エージェント側で内容を確認して送信する。
+
+LSPのdocumentSymbolを優先し、取得できなければTree-sitter、両方なければファイル位置のみ渡す。複数LSPは順に試し、各リクエストを1.5秒で打ち切る。Tree-sitterの対応ノードは代表的な関数・メソッド・クラス・structに限る。本文・選択コードは最大120行・12000バイト（UTF-8を保持）で、省略を明示する。未保存ならディスクとの差異を明示し、解析中に編集されたバッファは送らない。秘密値を含むコードも送信対象になるため、選択範囲・送信先に注意する。AIサービスへの送信は各エージェントの設定に従う。
+
+実装は`nvim/lua/herdr.lua`（送信先）と`nvim/lua/herdr/context.lua`（文脈）。既存の`link.sh`のLuaディレクトリリンクと`init.sh`のHerdr導入で利用できる。
 
 ### コミット・push（lazygit）
 
@@ -105,6 +121,12 @@ Oilでは通常の編集操作でファイル名を変更し、`:w`で操作内�
 Nerd Fontを使用しない場合は`nvim/init.lua`の`vim.g.have_nerd_font`を`false`にすると、追加UIのアイコンを簡素化する。
 
 ## 起動チェック
+
+Herdr連携のチェック（Herdrサーバー・LSP・プラグイン不要。送信はモック）:
+
+```sh
+nvim --headless -u NONE -l tests/neovim-herdr.lua
+```
 
 初回インストール完了後:
 

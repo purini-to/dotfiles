@@ -215,6 +215,7 @@ require('dotfiles.local_llm').setup()
 require('dotfiles.git').setup()
 require('dotfiles.codediff_ai').setup()
 require('dotfiles.codediff_review').setup()
+require('herdr').setup()
 require('trouble').setup {
   icons = vim.g.have_nerd_font and {} or {
     folder_closed = '+ ', folder_open = '- ', indent = { fold_open = '- ', fold_closed = '+ ' },
