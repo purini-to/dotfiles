@@ -560,7 +560,10 @@ end
 core.pick()
 assert(vim.deep_equal(repo_labels, { vim.fs.basename(repo_tree), 'child repo', 'deep', '表示切替 → 全リポジトリ一括' }), vim.inspect(repo_labels))
 assert(target.number == 12 and target.opts.cwd == repo_tree .. '/child repo' and target.opts.repo == 'o/child')
-assert(vim.deep_equal(api_cwds, { repo_tree .. '/child repo', repo_tree .. '/child repo' }), vim.inspect(api_cwds))
+-- 選んだ後、他のリポジトリから同じブランチのPRを探す（同じGitHubリポジトリのPRは候補にしない）。
+assert(vim.deep_equal(api_cwds, {
+  repo_tree .. '/child repo', repo_tree .. '/child repo', repo_tree, repo_tree, repo_tree .. '/group/deep', repo_tree .. '/group/deep',
+}), vim.inspect(api_cwds))
 vim.ui.input = function(_, cb) cb('23') end
 manual = true
 core.pick()
@@ -758,6 +761,307 @@ core.submit 'comment'
 submit_done()
 assert(#saved_ctx.drafts == 1 and saved_ctx.drafts[1].body == '総評画面の間に編集', '確認画面を開いた後の編集も残す')
 ui.input = automatic_input
+
+-- PRの更新で下書きの行を移す: 差分(-U0 -M)の変更範囲を避けて行のずれだけを足す。
+do
+  local relocate = require 'dotfiles.codediff_review.relocate'
+  local work = vim.fn.tempname()
+  vim.fn.mkdir(work, 'p')
+  local function sh(command)
+    local result = vim.system({ 'sh', '-c', command }, { cwd = work, text = true }):wait()
+    assert(result.code == 0, result.stderr)
+    return vim.trim(result.stdout)
+  end
+  sh [[git init -q && git config user.email t@example.com && git config user.name t &&
+    printf '1\n2\n3\n4\n5\n' > a.lua && printf 'x\ny\n' > 'old 名前.lua' && git add . && git commit -qm one]]
+  local old = sh 'git rev-parse HEAD'
+  sh [[printf '0\n1\n2\nTHREE\n4\n5\n' > a.lua && git mv 'old 名前.lua' 'new 名前.lua' && git add . && git commit -qm two]]
+  local new = sh 'git rev-parse HEAD'
+  local files, done
+  relocate.diff(work, old, new, function(err, value) assert(not err, err); files, done = value, true end)
+  assert(vim.wait(5000, function() return done end))
+  assert(vim.deep_equal(relocate.move(files, { path = 'a.lua', line = 2 }), { path = 'a.lua', line = 3 }), '上に追加された行のぶんずらす')
+  assert(relocate.move(files, { path = 'a.lua', line = 5 }).line == 6)
+  local moved, renamed = relocate.move(files, { path = 'a.lua', line = 3 })
+  assert(not moved and renamed == 'a.lua', '書き換えられた行は移せない')
+  assert(not relocate.move(files, { path = 'a.lua', line = 4, start_line = 2 }), '範囲の中が書き換えられたら移せない')
+  assert(vim.deep_equal(relocate.move(files, { path = 'old 名前.lua', line = 2 }), { path = 'new 名前.lua', line = 2 }), 'リネームを追う（日本語パス）')
+  assert(vim.deep_equal(relocate.move(files, { path = 'other.lua', line = 7 }), { path = 'other.lua', line = 7 }), '差分のないファイルはそのまま')
+  vim.fn.delete(work, 'rf')
+end
+
+-- LSP: 差分（仮想バッファ）で grd などを押すと、実ファイルを別タブで開き、LSPが付いてから同じキーを実行する。
+-- 手元がPRと同じ内容なら手元、違えばPRのコミットを切り出したworktreeで開く。
+do
+  local review_lsp = require 'dotfiles.codediff_review.lsp'
+  local work = vim.fn.tempname()
+  vim.fn.mkdir(work, 'p')
+  work = vim.uv.fs_realpath(work)
+  local function sh(command)
+    local result = vim.system({ 'sh', '-c', command }, { cwd = work, text = true }):wait()
+    assert(result.code == 0, result.stderr)
+    return vim.trim(result.stdout)
+  end
+  sh [[git init -q && git config user.email t@example.com && git config user.name t && mkdir src && printf 'a\nbb\nc\n' > src/x.lua && git add . && git commit -qm pr]]
+  local pr_head = sh 'git rev-parse HEAD'
+  local cursor, base_revision = adapter.cursor, adapter.base_revision
+  adapter.cursor = function() return { side = 'RIGHT', line = 2 } end
+  local start_tab = vim.api.nvim_get_current_tabpage()
+  local function run(key)
+    review_lsp.run({ cwd = work, head_sha = pr_head, path = 'src/x.lua', tab = start_tab }, key)
+    assert(vim.wait(5000, function() return vim.api.nvim_get_current_tabpage() ~= start_tab end), 'タブが開かない')
+    local buf = vim.api.nvim_get_current_buf()
+    local fired = false
+    vim.keymap.set('n', key, function() fired = true end, { buffer = buf })
+    vim.api.nvim_exec_autocmds('LspAttach', { buffer = buf, data = { client_id = 0 } })
+    assert(vim.wait(1000, function() vim.api.nvim_feedkeys('', 'x', false); return fired end), 'LSPが付いたら同じキーを実行する')
+    local name, pos = vim.api.nvim_buf_get_name(buf), vim.api.nvim_win_get_cursor(0)
+    vim.cmd 'tabclose'
+    vim.api.nvim_set_current_tabpage(start_tab)
+    return name, pos
+  end
+  local name, pos = run 'grd'
+  assert(name == work .. '/src/x.lua' and pos[1] == 2, '手元が同じ内容なら手元を同じ位置で開く: ' .. name)
+  sh [[printf 'local\nchanged\n' > src/x.lua]]
+  name, pos = run 'gri'
+  assert(name ~= work .. '/src/x.lua' and name:find('/codediff-review/worktrees/', 1, true) and pos[1] == 2, 'PRと違えばworktreeで開く: ' .. name)
+  assert(vim.deep_equal(vim.fn.readfile(name), { 'a', 'bb', 'c' }), 'worktreeはPRの内容')
+  assert(vim.deep_equal(vim.fn.readfile(work .. '/src/x.lua'), { 'local', 'changed' }), '手元の作業ツリーは変えない')
+  review_lsp.cleanup()
+  assert(vim.fn.filereadable(name) == 0, '終了時にworktreeを消す')
+  -- 強制終了で残ったworktreeは起動時に消す。起動中の別のNeovim（ここでは親プロセス）のものは残す。
+  local worktrees = vim.fn.stdpath 'cache' .. '/codediff-review/worktrees'
+  local dead, alive = worktrees .. '/999999999/stale', worktrees .. '/' .. vim.uv.os_getppid() .. '/live'
+  sh('git worktree add -q --detach ' .. dead .. ' HEAD && git worktree add -q --detach ' .. alive .. ' HEAD')
+  review_lsp.prune_stale()
+  assert(vim.wait(5000, function() return vim.uv.fs_stat(worktrees .. '/999999999') == nil and not sh('git worktree list'):find('stale', 1, true) end), '終了したNeovimのworktreeを消す')
+  assert(vim.uv.fs_stat(alive) and sh('git worktree list'):find(alive, 1, true), '起動中のNeovimのworktreeは残す')
+  sh('git worktree remove --force ' .. alive)
+  adapter.cursor, adapter.base_revision = cursor, base_revision
+  vim.fn.delete(work, 'rf')
+end
+
+-- まとめてレビュー: PRごとのタブを1件ずつ開いて束ね、]p / [p・コメント一覧・まとめて送信がPRをまたぐ。
+do
+  -- PR一覧のテストで開きかけたPRを、レビュー中でないタブから中止する。
+  vim.cmd 'tabnew'
+  core.close()
+  vim.cmd 'tabclose'
+  local first_tab = vim.api.nvim_get_current_tabpage()
+  local gh_backup = { repository = gh.repository, pull_request = gh.pull_request, files = gh.files, threads = gh.threads, submit = gh.submit }
+  local member_patch = '@@ -1,3 +1,4 @@\n a\n b\n+c\n d'
+  local heads = { ['o/front'] = 'f1', ['o/back'] = 'b1' }
+  gh.repository = function(_, repo, cb) cb(nil, repo) end
+  gh.pull_request = function(_, repo, _, cb) cb(nil, { headRefOid = heads[repo], title = repo .. ' title', url = 'u' }) end
+  gh.files = function(_, repo, _, cb) cb(nil, { { filename = repo == 'o/front' and 'new.lua' or 'api.lua', patch = member_patch } }) end
+  gh.threads = function(_, repo, _, cb)
+    cb(nil, repo == 'o/back' and { github.normalize_thread(thread_node('B1', { path = 'api.lua', line = 3, startLine = 3 })) } or {})
+  end
+  local member_store = package.loaded['dotfiles.codediff_review.store']
+  local store_load, store_save, saved_prs = member_store.load, member_store.save, {}
+  member_store.load = function(repo)
+    if saved_prs[repo] then return vim.deepcopy(saved_prs[repo].drafts) end -- 保存済みを読み直す（再読み込み）
+    if repo ~= 'o/front' then return {} end
+    return { { id = 'F1', path = 'new.lua', side = 'RIGHT', line = 3, body = 'フロントの指摘', head_sha = 'f1', created_at = 0 } }
+  end
+  member_store.save = function(pr) saved_prs[pr.repo] = pr; return true end
+  local opened_cmds, tabs = {}, {}
+  vim.cmd = setmetatable({}, { __call = function(_, c) opened_cmds[#opened_cmds + 1] = c end, __index = original_cmd })
+  -- CodeDiffが新しいタブを作り、PRのHEADを表示したとしてCodeDiffOpenを送る。
+  local lifecycle_stub = package.loaded['codediff.ui.lifecycle']
+  local get_session, tab_sessions = lifecycle_stub.get_session, {}
+  lifecycle_stub.get_session = function(t) return tab_sessions[t] or get_session(t) end
+  local function codediff_opened(head, path)
+    original_cmd 'tabnew'
+    local t = vim.api.nvim_get_current_tabpage()
+    local buf, win = vim.api.nvim_get_current_buf(), vim.api.nvim_get_current_win()
+    vim.bo[buf].buftype = 'nofile'
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, { 'a', 'b', 'c', 'd' })
+    tabs[#tabs + 1] = t
+    tab_sessions[t] = {
+      layout = 'inline', modified_bufnr = buf, modified_win = win, original_win = win,
+      original = { relative = path }, modified = { relative = path },
+      panel = { name = 'explorer', data = { current_selection = { path = path }, target_revision = head, status_result = { unstaged = { { path = path, status = 'M' } } } } },
+      stored_diff_result = { changes = {} },
+    }
+    vim.api.nvim_exec_autocmds('User', { pattern = 'CodeDiffOpen', data = { tabpage = t, mode = 'explorer' } })
+  end
+  core.open_group {
+    { pr = { number = 1 }, cwd = '/front', repo = 'o/front' },
+    { pr = { number = 2 }, cwd = '/back', repo = 'o/back' },
+  }
+  assert(#opened_cmds == 1 and opened_cmds[1]:find('CodeDiff pr 1 ', 1, true), '1件ずつ開く: ' .. vim.inspect(opened_cmds))
+  codediff_opened('f1', 'new.lua')
+  assert(vim.wait(1000, function() return #opened_cmds == 2 end) and opened_cmds[2]:find('CodeDiff pr 2 ', 1, true), '前のPRのタブができてから次を開く')
+  codediff_opened('b1', 'api.lua')
+  vim.cmd = original_cmd
+  assert(vim.wait(1000, function() return vim.api.nvim_get_current_tabpage() == tabs[1] end), '開き終わったら最初のPRのタブへ戻る')
+  -- ]p / [p: グループ内のタブを循環する。
+  core.goto_pr(1)
+  assert(vim.api.nvim_get_current_tabpage() == tabs[2])
+  core.goto_pr(1)
+  assert(vim.api.nvim_get_current_tabpage() == tabs[1], '端では循環')
+  core.goto_pr(-1)
+  assert(vim.api.nvim_get_current_tabpage() == tabs[2])
+  -- 一覧: 全PRのコメントを開いた順に並べ、[リポジトリ名]を付ける。選ぶとそのPRのタブへ移動する。
+  local group_list
+  vim.ui.select = function(items, opts, cb) group_list = { items = items, labels = vim.tbl_map(opts.format_item, items), prompt = opts.prompt }; cb(items[1]) end
+  core.list()
+  vim.ui.select = select_backup
+  assert(group_list.prompt == '2件のPRのコメント（選択でジャンプ）' and #group_list.items == 2, vim.inspect(group_list))
+  assert(group_list.labels[1]:find('[front]', 1, true) and group_list.labels[2]:find('[back] @bob', 1, true), vim.inspect(group_list.labels))
+  assert(vim.api.nvim_get_current_tabpage() == tabs[1], '別PRのコメントを選ぶとそのタブへ')
+  -- ]r: 最後のPRの最後の次は、最初のPRへ循環する。
+  core.goto_comment(1)
+  assert(vim.api.nvim_get_current_tabpage() == tabs[2], '次のPRのコメントへ')
+  core.goto_comment(1)
+  assert(vim.api.nvim_get_current_tabpage() == tabs[1], '最後の次は最初のPRへ')
+
+  -- まとめて送信: 見出しごとに総評を分け、見出しより前は共通。HEADが1件でも変わっていれば何も送らない。
+  local group_requests, group_input = {}, nil
+  gh.submit = function(_, repo, _, payload, cb) group_requests[#group_requests + 1] = { repo = repo, payload = payload }; cb() end
+  ui.input = function(opts, cb) group_input = opts; cb('共通\n## o/front#1\nフロント向け\n## o/back#2\n') end
+  heads['o/back'] = 'moved'
+  core.submit 'comment'
+  assert(group_input.initial == '## o/front#1\n\n## o/back#2\n', vim.inspect(group_input.initial))
+  assert(table.concat(group_input.context, '\n'):find('o/back#2  COMMENT', 1, true))
+  vim.wait(200, function() return false end)
+  assert(#group_requests == 0, 'HEADが変わったPRがあれば何も送らない')
+  heads['o/back'] = 'b1'
+  core.submit 'approve'
+  assert(vim.wait(1000, function() return #group_requests == 2 end), vim.inspect(group_requests))
+  assert(group_requests[1].repo == 'o/front' and group_requests[1].payload.body == '共通\n\nフロント向け' and #group_requests[1].payload.comments == 1)
+  assert(group_requests[2].repo == 'o/back' and group_requests[2].payload.body == '共通' and group_requests[2].payload.event == 'APPROVE')
+  assert(#saved_prs['o/front'].drafts == 0, '送信したPRの下書きを消す')
+  -- 総評もコメントもないCOMMENTは飛ばす。途中で失敗したら残りは送らず、送れたPRの下書きだけ消す。
+  table.insert(saved_prs['o/front'].drafts, { id = 'F2', path = 'new.lua', side = 'RIGHT', line = 3, body = '再指摘', head_sha = 'f1' })
+  group_requests = {}
+  ui.input = function(_, cb) cb('## o/front#1\n\n## o/back#2\n') end
+  core.submit 'comment'
+  assert(vim.wait(1000, function() return #group_requests == 1 end) and group_requests[1].repo == 'o/front', '総評もコメントもないPRは飛ばす')
+  table.insert(saved_prs['o/front'].drafts, { id = 'F3', path = 'new.lua', side = 'RIGHT', line = 3, body = '再々指摘', head_sha = 'f1' })
+  local failures = 0
+  gh.submit = function(_, repo, _, payload, cb)
+    group_requests[#group_requests + 1] = { repo = repo, payload = payload }
+    if repo == 'o/back' then failures = failures + 1; return cb 'network failure' end
+    cb()
+  end
+  group_requests = {}
+  ui.input = function(_, cb) cb('## o/front#1\n\n## o/back#2\n総評') end
+  core.submit 'comment'
+  assert(vim.wait(1000, function() return failures == 1 end) and #group_requests == 2)
+  assert(#saved_prs['o/front'].drafts == 0, '送信できたPRの下書きは消す')
+  -- 次の送信は前回送れなかったPRだけ（送信済みのPRへ二重に送らない）。
+  gh.submit = function(_, repo, _, payload, cb) group_requests[#group_requests + 1] = { repo = repo, payload = payload }; cb() end
+  group_requests = {}
+  local retry_input
+  ui.input = function(opts, cb) retry_input = opts; cb('再送') end
+  core.submit 'comment'
+  assert(vim.wait(1000, function() return #group_requests == 1 end) and group_requests[1].repo == 'o/back' and group_requests[1].payload.body == '再送', vim.inspect(group_requests))
+  assert(retry_input.initial == nil, '1件だけなら見出しなし')
+  -- 見出しが欠けていたら何も送らず、入力した本文を残して入力画面へ戻す。
+  group_requests = {}
+  local asked = {}
+  ui.input = function(opts, cb)
+    asked[#asked + 1] = opts.initial
+    if #asked == 1 then cb('## o/front#1\nフロントだけ') end
+  end
+  core.submit 'comment'
+  assert(#asked == 2 and asked[2] == '## o/front#1\nフロントだけ' and #group_requests == 0, vim.inspect(asked))
+  -- 要確認（今のHEADへ移せていない）下書きは、確認してから除いて送る。下書きは残す。
+  saved_prs['o/back'].drafts = { { id = 'S', path = 'api.lua', side = 'RIGHT', line = 3, body = '古い', head_sha = 'old', stale = true } }
+  local stale_prompt
+  vim.ui.select = function(items, opts, cb) stale_prompt = opts.prompt; cb(items[1]) end
+  ui.input = function(_, cb) cb('## o/front#1\n総評\n## o/back#2\n') end
+  core.submit 'comment'
+  vim.ui.select = select_backup
+  assert(stale_prompt == '要確認の下書きが1件あります（gM で行を移す / gd で削除）', tostring(stale_prompt))
+  assert(vim.wait(1000, function() return #group_requests == 1 end) and group_requests[1].repo == 'o/front' and group_requests[1].payload.body == '総評')
+  assert(#saved_prs['o/back'].drafts == 1, '要確認の下書きは送らずに残す')
+  vim.ui.select = function(_, _, cb) cb('cancel') end
+  group_requests = {}
+  core.submit 'comment'
+  vim.ui.select = select_backup
+  vim.wait(100, function() return false end)
+  assert(#group_requests == 0, 'キャンセルなら送らない')
+  saved_prs['o/back'].drafts = {}
+  ui.input = automatic_input
+  -- 送信時にHEADが更新されていたら、確認して下書きを残したまま再読み込みする。
+  -- 下書きは新しいHEADへ行のずれを追って移し、書き換えられた行の下書きは要確認にする。グループ内の順番は保つ。
+  saved_prs['o/back'].drafts = {
+    { id = 'K', path = 'api.lua', side = 'RIGHT', line = 3, body = '残る', head_sha = 'b1' },
+    { id = 'R', path = 'api.lua', side = 'RIGHT', line = 2, body = '書き換えられた行', head_sha = 'b1' },
+  }
+  local relocate = require 'dotfiles.codediff_review.relocate'
+  local relocate_diff, diffed = relocate.diff, nil
+  relocate.diff = function(cwd, from, to, cb)
+    diffed = { cwd = cwd, from = from, to = to }
+    cb(nil, { ['api.lua'] = { path = 'api.lua', hunks = { { 1, 0, 2, 1 }, { 2, 1, 3, 1 } } } })
+  end
+  heads['o/back'] = 'b2'
+  local reload_prompt
+  opened_cmds = {}
+  vim.cmd = setmetatable({}, { __call = function(_, c) opened_cmds[#opened_cmds + 1] = c end, __index = original_cmd })
+  vim.ui.select = function(items, opts, cb) reload_prompt = opts.prompt; cb(items[1]) end
+  ui.input = function(_, cb) cb('## o/front#1\n総評\n## o/back#2\n') end
+  group_requests = {}
+  core.submit 'comment'
+  vim.ui.select = select_backup
+  assert(reload_prompt and reload_prompt:find('下書きを残して再読み込みしますか', 1, true) and #group_requests == 0, tostring(reload_prompt))
+  assert(#opened_cmds == 1 and opened_cmds[1]:find('CodeDiff pr 2 ', 1, true), vim.inspect(opened_cmds))
+  local old_back_tab = tabs[2]
+  codediff_opened('b2', 'api.lua')
+  vim.cmd = original_cmd
+  assert(vim.wait(1000, function() return not vim.api.nvim_tabpage_is_valid(old_back_tab) end), '元のタブを閉じる')
+  assert(vim.api.nvim_get_current_tabpage() == tabs[3], '新しいタブへ移る')
+  assert(diffed and diffed.cwd == '/back' and diffed.from == 'b1' and diffed.to == 'b2', vim.inspect(diffed))
+  local back = saved_prs['o/back']
+  local kept, rewritten = back.drafts[1], back.drafts[2]
+  assert(kept.line == 4 and kept.head_sha == 'b2' and not kept.stale, '行のずれを追って移す: ' .. vim.inspect(kept))
+  assert(rewritten.stale and rewritten.line == 2 and rewritten.head_sha == 'b1', '書き換えられた行は要確認: ' .. vim.inspect(rewritten))
+  core.goto_pr(1)
+  assert(vim.api.nvim_get_current_tabpage() == tabs[1], 'グループ内の順番を保つ（front → back）')
+  core.goto_pr(1)
+  -- gM: 要確認の下書きをカーソル行へ移す。
+  vim.api.nvim_win_set_cursor(0, { 1, 0 })
+  core.move()
+  assert(not rewritten.stale and rewritten.line == 1 and rewritten.head_sha == 'b2', vim.inspect(rewritten))
+  -- since: 前回のHEADから今のHEADまでの変更を開く。
+  local since_cmd
+  vim.cmd = setmetatable({}, { __call = function(_, c) since_cmd = c end, __index = original_cmd })
+  core.since()
+  vim.cmd = original_cmd
+  assert(since_cmd == 'CodeDiff --repo /back b1 b2', tostring(since_cmd))
+  relocate.diff = relocate_diff
+  back.drafts = {}
+  tabs[2] = tabs[3]
+  tabs[3] = nil
+  ui.input = automatic_input
+  vim.api.nvim_set_current_tabpage(tabs[1])
+  -- 開いている途中のPRは、レビュー中のタブからでも :CodeDiffReview close で先に中止する。
+  vim.cmd = setmetatable({}, { __call = function() end, __index = original_cmd })
+  core.open(9, { cwd = '/front', repo = 'o/front' })
+  vim.cmd = original_cmd
+  core.close()
+  local reopened
+  vim.cmd = setmetatable({}, { __call = function(_, c) reopened = c end, __index = original_cmd })
+  core.open(9, { cwd = '/front', repo = 'o/front' })
+  vim.cmd = original_cmd
+  assert(reopened and reopened:find('CodeDiff pr 9 ', 1, true), '中止後は開ける')
+  core.close()
+  core.goto_pr(1)
+  assert(vim.api.nvim_get_current_tabpage() == tabs[2], '中止してもグループは残す')
+  vim.api.nvim_set_current_tabpage(tabs[1])
+  -- タブを閉じたPRはグループから外れる。
+  vim.api.nvim_exec_autocmds('User', { pattern = 'CodeDiffClose', data = { tabpage = tabs[2] } })
+  core.goto_pr(1)
+  assert(vim.api.nvim_get_current_tabpage() == tabs[1], '残りが1件なら切り替えない')
+  vim.api.nvim_exec_autocmds('User', { pattern = 'CodeDiffClose', data = { tabpage = tabs[1] } })
+  for _, t in ipairs(tabs) do original_cmd('tabclose ' .. vim.api.nvim_tabpage_get_number(t)) end
+  vim.api.nvim_set_current_tabpage(first_tab)
+  member_store.load, member_store.save, lifecycle_stub.get_session = store_load, store_save, get_session
+  for name, fn in pairs(gh_backup) do gh[name] = fn end
+end
 -- 共通のローカルLLM設定: モデル切替の保存・一覧・呼び出し、要約側と入力補佐が同じモデルを使う
 local llm_state = vim.fn.tempname()
 vim.fn.stdpath = function(what) return what == 'state' and llm_state or stdpath(what) end
@@ -834,6 +1138,11 @@ assert(sent.messages[1].content:find('レビューコメント案', 1, true) and
 assist.request('summary', 'レビュー種別: APPROVE', '', function() end)
 assert(vim.wait(2000, function() return sent.messages[2].content:find('（空）', 1, true) end))
 assert(sent.messages[1].content:find('総評', 1, true) and not sent.messages[1].content:find('続きを書い', 1, true), '空なら案出しプロンプト')
+-- 1段落にまとめられた日本語は句点で改行する。改行・コードを含む出力はそのまま。プロンプトでも改行と元の構成の維持を指示する。
+assert(assist.break_lines '処理を消します。意図を教えてください。' == '処理を消します。\n意図を教えてください。')
+assert(assist.break_lines '「確認しました。」問題ありません。' == '「確認しました。」\n問題ありません。')
+assert(assist.break_lines 'a\nb。c。' == 'a\nb。c。' and assist.break_lines '`x()`。理由は？' == '`x()`。理由は？')
+assert(sent.messages[1].content:find('句点「。」の後で改行', 1, true) and sent.messages[1].content:find('構成（改行の位置', 1, true))
 assist.request('reply', string.rep('あ', 7000), 'x', function() end)
 assert(vim.wait(2000, function() return sent.messages[2].content:find('省略', 1, true) end), '長い文脈は切り詰める')
 
@@ -841,6 +1150,7 @@ assert(vim.wait(2000, function() return sent.messages[2].content:find('省略', 
 package.loaded['dotfiles.codediff_review.ui'] = nil
 local real_ui = require 'dotfiles.codediff_review.ui'
 local assisted, saved = nil, 'unset'
+local input_origin = vim.api.nvim_get_current_win()
 real_ui.input({
   title = ' 総評 ', allow_empty = true,
   assist = function(text, done)
@@ -872,6 +1182,7 @@ assert(input_hints():find('反映済み・未保存', 1, true), '完了後もAI�
 vim.api.nvim_buf_set_lines(input_buf, 0, -1, false, { '' })
 vim.api.nvim_feedkeys(vim.keycode '<C-s>', 'x', false)
 assert(saved == '', '総評は空でも保存できる: ' .. vim.inspect(saved))
+assert(vim.api.nvim_get_current_win() == input_origin, '閉じたら開いた時のウィンドウ（差分ペイン）へ戻る')
 local ai_done
 real_ui.input({ initial = '元の本文', assist = function(_, done) ai_done = done; return { kill = function() end } end }, function() end)
 input_buf = vim.api.nvim_get_current_buf()

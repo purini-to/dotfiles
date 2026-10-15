@@ -15,10 +15,10 @@ local function define_highlights()
   for name, link in pairs(groups) do vim.api.nvim_set_hl(0, name, { link = link, default = true }) end
 end
 
--- 古い(outdated)スレッドは現在の行に載せられないので、ファイル先頭行の直下に出す。
+-- 古い(outdated)スレッドと要確認(stale)の下書きは現在の行に載せられないので、ファイル先頭行の直下に出す。
 -- (1行目の上の仮想行はNeovimが表示しない)
 function M.anchor(item)
-  if item.line then return item.side, item.line end
+  if item.line and not item.stale then return item.side, item.line end
   return 'RIGHT', 1
 end
 
@@ -30,7 +30,7 @@ function M.items(ctx)
   end
   for _, c in ipairs(ctx.drafts) do
     if c.path == ctx.path then
-      items[#items + 1] = { kind = 'draft', side = c.side, line = c.line, start_line = c.start_line, comments = { c } }
+      items[#items + 1] = { kind = 'draft', side = c.side, line = c.line, start_line = c.start_line, stale = c.stale, comments = { c } }
     end
   end
   return items
@@ -63,6 +63,7 @@ end
 -- 状態バッジ。{ text, hl } のリスト。
 function M.badges(item, brief)
   local icons = config.options.icons
+  if item.kind == 'draft' and item.stale then return { { icons.outdated .. ' 下書き・要確認', 'CodeDiffReviewCardOutdated' } } end
   if item.kind == 'draft' then return { { icons.draft .. ' 下書き', 'CodeDiffReviewCardDraft' } } end
   local badges = {}
   if item.resolved then
@@ -77,7 +78,7 @@ end
 local function location(item)
   if not item.line then return item.original_line and ('元 L' .. item.original_line) or '' end
   local range = item.start_line and (item.start_line .. '-' .. item.line) or tostring(item.line)
-  return (item.side == 'LEFT' and '変更前 ' or '') .. 'L' .. range
+  return (item.stale and '元 ' or '') .. (item.side == 'LEFT' and '変更前 ' or '') .. 'L' .. range
 end
 
 -- 折りたたむか。解決済みスレッドは、ctx.open_resolved でなければ1行にまとめる。
@@ -156,6 +157,7 @@ local function build(item, width, open_resolved)
   end
   lines[#lines + 1] = rule('├', '┤')
   local hint = item.kind == 'draft' and 'ge 編集 · gd 削除 · レビュー送信まで未投稿' or ('gR 返信 · gx ' .. (item.resolved and '再開' or '解決'))
+  if item.stale then hint = 'PRの更新で行を移せませんでした · gM カーソル行へ移す · gd 削除 · 送信には含めない' end
   for _, segs in ipairs(markdown.render(hint, inner)) do
     for _, seg in ipairs(segs) do seg[2] = 'CodeDiffReviewCardMeta' end
     lines[#lines + 1] = row(segs, 'CodeDiffReviewCardHeader')

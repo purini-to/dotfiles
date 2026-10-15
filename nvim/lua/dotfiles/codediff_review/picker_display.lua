@@ -1,6 +1,9 @@
 -- telescope-ui-selectのPR専用表示。検索・選択には省略前の内容を使う。
 local config = require 'dotfiles.codediff_review.config'
 local M = {}
+-- telescope-ui-selectは選んだ1件しか返さない。表示に使ったpickerを覚えておき、Tabで印を付けた項目を読む。
+-- ponytail: telescope-ui-selectの表示呼び出しに依存する。他のvim.ui.selectでは1件選択になる。壊れたらPR一覧を専用のTelescope pickerにする。
+local active
 
 local function clean(text) return tostring(text or ''):gsub('%c', ' ') end
 
@@ -63,6 +66,7 @@ end
 
 function M.make_display(displayer)
   return function(entry, picker)
+    active = picker
     local available = math.max(0, vim.api.nvim_win_get_width(picker.results_win) - vim.fn.strdisplaywidth(picker.selection_caret))
     if available == 0 then return '' end
     if entry.value.label then
@@ -70,6 +74,18 @@ function M.make_display(displayer)
     end
     return displayer(entry.value.fields, available)
   end
+end
+
+-- 一覧を開く前に呼ぶ。前回のpickerの印を引き継がない。
+function M.reset() active = nil end
+
+-- Enterで選んだ項目と、Tabで印を付けた項目。印がなければ選んだ項目だけ。
+function M.take(choice)
+  local picker = active
+  active = nil
+  local marked = picker and picker.get_multi_selection and picker:get_multi_selection() or {}
+  if #marked == 0 then return { choice } end
+  return vim.tbl_map(function(entry) return entry.value.text end, marked)
 end
 
 function M.make_ordinal(entry) return entry.label or table.concat(entry.fields, ' ') end

@@ -90,6 +90,61 @@ core.open = function(number, opts) opened = { number = number, opts = opts } end
 selection.callback(selection.items[1])
 assert(opened.number == 8 and opened.opts.repo == 'owner/beta' and opened.opts.cwd == root .. '/beta')
 
+-- Tabで印を付けたPRはまとめて開く。telescope-ui-selectは1件しか返さないため、表示に使ったpickerから読む。
+do
+  local display = require 'dotfiles.codediff_review.picker_display'
+  package.loaded['plenary.strings'] = { truncate = function(text) return text end }
+  local grouped
+  local open_group = core.open_group
+  core.open_group = function(items) grouped = items end
+  local function by_number(number)
+    for _, item in ipairs(selection.items) do if item.pr and item.pr.number == number then return item end end
+  end
+  local function show_with_marks(marked)
+    local picker = { results_win = 0, selection_caret = '> ', get_multi_selection = function()
+      return vim.tbl_map(function(item) return { value = { text = item } } end, marked)
+    end }
+    display.make_display()({ value = { label = '番号を入力…' } }, picker)
+  end
+  fixtures.zeta[2] = { number = 3, headRefName = 'alpha', title = 'Zeta側' }
+  core.pick()
+  show_with_marks { by_number(8), by_number(2) }
+  opened, grouped = nil, nil
+  selection.callback(by_number(1))
+  assert(not opened and #grouped == 2 and grouped[1].pr.number == 8 and grouped[2].pr.number == 2, '印を付けた項目を開く（Enterの行ではなく）')
+  assert(grouped[1].cwd == root .. '/beta' and grouped[2].repo == 'owner/zeta')
+
+  -- 同じブランチ名のPRが他のリポジトリにあれば確認する。同じリポジトリの別PRは候補にしない。
+  core.pick()
+  grouped = nil
+  selection.callback(by_number(8))
+  assert(selection.opts.prompt:find('owner/zeta#3', 1, true) and not selection.opts.prompt:find('#5', 1, true), selection.opts.prompt)
+  assert(selection.opts.format_item 'all' == 'まとめて開く（2件）' and selection.opts.format_item 'chosen' == '選んだものだけ開く（1件）')
+  selection.callback 'all'
+  assert(#grouped == 2 and grouped[1].pr.number == 8 and grouped[2].pr.number == 3)
+  core.pick()
+  opened = nil
+  selection.callback(by_number(8))
+  selection.callback 'chosen'
+  assert(opened.number == 8, '選んだものだけなら従来どおり1件で開く')
+  core.pick()
+  show_with_marks {}
+  selection.callback(by_number(1))
+  assert(opened.number == 1, '印がなければEnterの1件だけ')
+  -- 印がPR以外の行だけなら、Enterの行を開く。
+  core.pick()
+  local sort_item
+  for _, item in ipairs(selection.items) do if item.sort then sort_item = item end end
+  show_with_marks { sort_item }
+  opened = nil
+  selection.callback(by_number(8))
+  selection.callback 'chosen'
+  assert(opened.number == 8, '印がPR以外だけならEnterの行')
+  fixtures.zeta[2] = nil
+  package.loaded['plenary.strings'] = nil
+  core.open_group = open_group
+end
+
 -- 表示切替で無効化された並び順ダイアログは設定や一覧を変更しない。
 core.pick()
 for _, item in ipairs(selection.items) do if item.sort then selection.callback(item); break end end

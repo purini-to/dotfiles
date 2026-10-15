@@ -20,6 +20,13 @@ function M.shows_revision(tab, sha)
   return type(target) == 'string' and target ~= '' and sha:sub(1, #target) == target
 end
 
+-- 表示中のPRのbase（merge-base）のSHA。左側（変更前）の下書きの行を移すのに使う。
+function M.base_revision(tab)
+  local session = M.session(tab)
+  local base = session and session.panel.data and session.panel.data.base_revision
+  return type(base) == 'string' and base ~= '' and base or nil
+end
+
 -- CodeDiffFileSelectはバッファ切替より先に発火する。選択と表示中の
 -- ウィンドウ・バッファが一致して初めて準備完了とみなす。
 -- 左右分割は LEFT/RIGHT、インラインは(変更後の)RIGHTだけ。削除行は仮想行でバッファに無い。

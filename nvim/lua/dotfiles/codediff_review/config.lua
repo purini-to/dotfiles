@@ -10,8 +10,10 @@ local M = {
     show_resolved = false, -- 解決済みも表示する（実行中は gZ で切り替え）
     -- falseで無効化。差分バッファのバッファローカルに設定する。
     keymaps = { comment = 'c', comment_visual = 'c', comment_deleted = 'gD', toggle = 'gz', toggle_resolved = 'gZ', reply = 'gR', resolve = 'gx',
-      next_comment = ']r', prev_comment = '[r', preview = 'gp', edit = 'ge', delete = 'gd', list = 'gC', submit = 'gS' },
+      next_comment = ']r', prev_comment = '[r', next_pr = ']p', prev_pr = '[p', preview = 'gp', edit = 'ge', delete = 'gd', move = 'gM', move_visual = 'gM', list = 'gC', submit = 'gS' },
     show_virt_text = true, -- 折りたたみ時、行末にコメント冒頭を出す
+    -- 差分ペインで押すと、実ファイルを別タブで開いてLSPの同じキーを実行する（PRの差分にはLSPが付かないため）。{} で無効化。
+    lsp_keys = { 'grd', 'grr', 'gri', 'grt', 'grD', 'gO', 'gW', 'K' },
   },
 }
 

@@ -9,16 +9,19 @@ local usage = table.concat({
   ':CodeDiffReview attach <PR番号> [--repo [HOST/]owner/repo]   開いているCodeDiffのPRに接続',
   ':CodeDiffReview pick-toggle   PR一覧をリポジトリ別 / 全リポジトリ一括に切替',
   ':CodeDiffReview pick-sort   PRの並び順を選択',
-  ':CodeDiffReview comment | preview | edit | delete | list | refresh',
-  ':CodeDiffReview reply | resolve | resolved | next | prev',
+  ':CodeDiffReview comment | preview | edit | delete | move | list | refresh',
+  ':CodeDiffReview reply | resolve | resolved | next | prev | next-pr | prev-pr',
   ':CodeDiffReview submit [comment|approve|request_changes]',
+  ':CodeDiffReview reload   下書きを残してPRを新しいHEADで開き直す   :CodeDiffReview since   前回のHEADからの変更',
   ':CodeDiffReview status | close',
 }, '\n')
 
-local subcommands = { pick = core.pick, ['pick-toggle'] = core.toggle_pick, ['pick-sort'] = core.choose_sort, comment = core.comment, preview = core.preview, edit = core.edit, delete = core.delete,
+local subcommands = { pick = core.pick, ['pick-toggle'] = core.toggle_pick, ['pick-sort'] = core.choose_sort, comment = core.comment, preview = core.preview, edit = core.edit, delete = core.delete, move = function() core.move() end,
+  reload = core.reload, since = core.since,
   list = core.list, refresh = core.refresh, status = core.status, close = core.close,
   reply = core.reply, resolve = core.resolve, resolved = core.toggle_resolved,
-  next = function() core.goto_comment(1) end, prev = function() core.goto_comment(-1) end }
+  next = function() core.goto_comment(1) end, prev = function() core.goto_comment(-1) end,
+  ['next-pr'] = function() core.goto_pr(1) end, ['prev-pr'] = function() core.goto_pr(-1) end }
 
 local function open(argv, attach)
   local first = attach and 2 or 1
@@ -56,7 +59,7 @@ function M.setup(opts)
     nargs = '*',
     desc = 'CodeDiffでGitHub PRをレビュー',
     complete = function(arglead)
-      local choices = { 'pick', 'pick-toggle', 'pick-sort', 'attach', 'comment', 'preview', 'edit', 'delete', 'list', 'refresh', 'submit', 'status', 'close', 'reply', 'resolve', 'resolved', 'next', 'prev',
+      local choices = { 'pick', 'pick-toggle', 'pick-sort', 'attach', 'comment', 'preview', 'edit', 'delete', 'move', 'reload', 'since', 'list', 'refresh', 'submit', 'status', 'close', 'reply', 'resolve', 'resolved', 'next', 'prev', 'next-pr', 'prev-pr',
         'approve', 'request_changes', '--repo', '--remote' }
       return vim.tbl_filter(function(item) return vim.startswith(item, arglead) end, choices)
     end,

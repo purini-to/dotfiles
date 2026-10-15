@@ -66,6 +66,8 @@ end
 --   context があれば入力欄の上に読み取り専用の一覧を出す（<C-d>/<C-u> でスクロール）。
 function M.input(opts, callback)
   local llm = require 'dotfiles.local_llm'
+  -- 閉じた後は開いた時のウィンドウ（差分ペイン）へ戻し、続けて次の行にコメントできるようにする。
+  local origin = vim.api.nvim_get_current_win()
   local editor = popup(opts.title or ' コメントを書く · 下書き ', true)
   local buf = editor.bufnr
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, vim.split(opts.initial or '', '\n', { plain = true }))
@@ -126,6 +128,7 @@ function M.input(opts, callback)
     vim.cmd.stopinsert()
     if preview then preview() end
     layout:unmount()
+    if vim.api.nvim_win_is_valid(origin) then vim.api.nvim_set_current_win(origin) end
     callback(value)
   end
   local function text() return vim.trim(table.concat(vim.api.nvim_buf_get_lines(buf, 0, -1, false), '\n')) end
