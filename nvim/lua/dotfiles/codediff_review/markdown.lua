@@ -200,7 +200,7 @@ local function resolve_group(name, lang)
 end
 
 -- 各行を { {text, hl}, ... } にする。パーサーが無ければ色なし。
-local function highlight_code(code_lines, lang)
+function M.highlight_code(code_lines, lang)
   local plain = {}
   for i, text in ipairs(code_lines) do plain[i] = { { text, nil } } end
   if not lang or lang == '' or #code_lines > 120 then return plain end
@@ -251,7 +251,7 @@ local function code_block(code_lines, lang, width)
   local rows = {}
   local label = lang == 'suggestion' and '提案（suggestion）' or (lang ~= '' and lang or nil)
   if label then rows[#rows + 1] = { { label, { style.block, style.label } } } end
-  for _, segs in ipairs(highlight_code(code_lines, lang ~= 'suggestion' and lang or nil)) do
+  for _, segs in ipairs(M.highlight_code(code_lines, lang ~= 'suggestion' and lang or nil)) do
     -- 幅を超える行は文字単位で折る
     local cells = {}
     for _, seg in ipairs(segs) do

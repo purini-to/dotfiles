@@ -96,5 +96,69 @@ assert(vim.bo.modified)
 assert(vim.api.nvim_buf_get_lines(0, 0, -1, false)[1] == 'local unsaved edit')
 vim.cmd 'bwipeout!'
 vim.fn.delete(path)
+-- PR selectors use available width; unrelated ui-select dropdowns keep the 80-column cap.
+local columns = vim.o.columns
+for _, case in ipairs {
+  { 160, 'repo のレビューするPR', 152 },
+  { 160, '全リポジトリのレビューするPR', 152 },
+  { 80, 'repo のレビューするPR', 76 },
+  { 160, 'PRの並び順', 80 },
+} do
+  vim.o.columns = case[1]
+  local original_win, closed = vim.api.nvim_get_current_win(), false
+  vim.ui.select({ '#1 タイトル (@author · feature/a-long-branch-name)' }, { prompt = case[2] }, function() closed = true end)
+  assert(vim.wait(1000, function() return vim.bo.filetype == 'TelescopePrompt' end))
+  local buf = vim.api.nvim_get_current_buf()
+  local picker = require('telescope.actions.state').get_current_picker(buf)
+  local width = vim.api.nvim_win_get_width(picker.results_win)
+  assert(width <= case[3] and width >= case[3] - 4, string.format('%s: width=%d', case[2], width))
+  require('telescope.actions').close(buf)
+  assert(vim.wait(1000, function() return closed and vim.api.nvim_get_current_win() == original_win end))
+end
+vim.o.columns = columns
+-- PR列は全角文字でも揃い、狭い画面で省略する。検索用文字列は省略しない。
+do
+  local ambiwidth = vim.o.ambiwidth
+  local display = require 'dotfiles.codediff_review.picker_display'
+  local rows = {
+    { repo = 'o/短い', pr = { number = 1, headRefName = 'a', author = { login = 'amy' }, title = 'タイトル' } },
+    { repo = 'o/long-repository', pr = { number = 1234, headRefName = 'feature/long-branch-name', author = { login = 'long-author-name' }, title = string.rep('長いタイトル', 30) .. '検索対象末尾' } },
+    { sort = true },
+  }
+  for _, mode in ipairs { 'single', 'double' } do
+    vim.o.ambiwidth = mode
+    for _, size in ipairs { 40, 80, 160 } do
+      vim.o.columns = size
+      local original_win, closed = vim.api.nvim_get_current_win(), false
+      vim.ui.select(rows, { kind = 'codediff_pr', prompt = '全リポジトリのレビューするPR' }, function() closed = true end)
+      assert(vim.wait(1000, function() return vim.bo.filetype == 'TelescopePrompt' end))
+      local buf = vim.api.nvim_get_current_buf()
+      local picker = require('telescope.actions.state').get_current_picker(buf)
+      assert(vim.wait(1000, function() return picker.manager and picker.manager:get_entry(2) ~= nil end))
+      local positions
+      local available = vim.api.nvim_win_get_width(picker.results_win) - vim.fn.strdisplaywidth(picker.selection_caret)
+      for index = 1, 2 do
+        local entry = picker.manager:get_entry(index)
+        local text, highlights = entry:display(picker)
+        assert(vim.fn.strdisplaywidth(text) == available, '表示行はパネル幅内に収める')
+        local starts = {}
+        for i, highlight in ipairs(highlights) do starts[i] = vim.fn.strdisplaywidth(text:sub(1, highlight[1][1])) end
+        if positions then assert(vim.deep_equal(positions, starts), '全角・半角の列開始位置を揃える') end
+        positions = starts
+        if index == 2 then
+          assert(text:find('…', 1, true) or text:find('.', 1, true), '長い文字列は省略する')
+          assert(entry.ordinal:find('検索対象末尾', 1, true), '省略したタイトル末尾も検索対象')
+        end
+      end
+      -- 極端に狭い幅でも、0幅の列やambiguous-widthの省略記号でエラーにしない。
+      local indexed, widths = display.make_indexed(rows)
+      local render = display.make_displayer(widths)
+      for width = 0, 8 do assert(vim.fn.strdisplaywidth((render(indexed[1].fields, width))) <= width) end
+      require('telescope.actions').close(buf)
+      assert(vim.wait(1000, function() return closed and vim.api.nvim_get_current_win() == original_win end))
+    end
+  end
+  vim.o.columns, vim.o.ambiwidth = columns, ambiwidth
+end
 print 'Neovim review config OK'
 vim.cmd 'qa!'

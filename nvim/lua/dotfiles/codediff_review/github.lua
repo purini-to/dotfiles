@@ -1,10 +1,29 @@
 local async = require 'dotfiles.codediff_review.async'
 local M = {}
 
-local function route(repo, number, path) return string.format('repos/%s/pulls/%d/%s', repo, number, path) end
+local function split_repo(repo)
+  local host, path = repo:match '^([^/]+)/([^/]+/[^/]+)$'
+  return host or 'github.com', path or repo
+end
+
+local function route(repo, number, path)
+  local _, name = split_repo(repo)
+  return string.format('repos/%s/pulls/%d/%s', name, number, path)
+end
 
 local function gh(args, cwd, callback, stdin)
   async.json(vim.list_extend({ 'gh' }, args), cwd, callback, stdin)
+end
+
+local function api(repo, args, cwd, callback, stdin)
+  local host = split_repo(repo)
+  vim.list_extend(args, { '--hostname', host })
+  gh(args, cwd, callback, stdin)
+end
+
+local function qualified_repo(repo)
+  local host, path = split_repo(repo)
+  return host .. '/' .. path
 end
 
 -- ページ送りは自前で行う（`gh api --paginate --slurp` は新しいghが必要）。
@@ -21,21 +40,26 @@ local function pages(fetch, callback)
 end
 
 function M.repository(cwd, explicit_repo, callback)
-  if explicit_repo then return callback(nil, explicit_repo) end
-  gh({ 'repo', 'view', '--json', 'nameWithOwner' }, cwd, function(err, repo)
+  local args = { 'repo', 'view' }
+  if explicit_repo then args[#args + 1] = explicit_repo end
+  vim.list_extend(args, { '--json', 'nameWithOwner,url' })
+  gh(args, cwd, function(err, repo)
     if err then return callback(err) end
     if type(repo) ~= 'table' or type(repo.nameWithOwner) ~= 'string' then return callback 'GitHubリポジトリを特定できません' end
-    callback(nil, repo.nameWithOwner)
+    local host = type(repo.url) == 'string' and repo.url:match '^https?://([^/]+)/'
+    if not host then return callback 'GitHubホストを特定できません' end
+    -- github.comの既存下書きキーは維持し、Enterpriseはホストごとに分離する。
+    callback(nil, host == 'github.com' and repo.nameWithOwner or host .. '/' .. repo.nameWithOwner)
   end)
 end
 
 function M.pull_request(cwd, repo, number, callback)
-  gh({ 'pr', 'view', tostring(number), '--repo', repo, '--json', 'number,title,url,headRefOid' }, cwd, callback)
+  gh({ 'pr', 'view', tostring(number), '--repo', qualified_repo(repo), '--json', 'number,title,url,headRefOid' }, cwd, callback)
 end
 
 function M.files(cwd, repo, number, callback)
   pages(function(page, done)
-    gh({ 'api', route(repo, number, 'files?per_page=100&page=' .. page) }, cwd, function(err, items)
+    api(repo, { 'api', route(repo, number, 'files?per_page=100&page=' .. page) }, cwd, function(err, items)
       done(err, items, type(items) == 'table' and #items == 100)
     end)
   end, callback)
@@ -43,7 +67,7 @@ end
 
 -- レビュー対象の選択肢: Open(Draft含む)のPR。
 function M.pull_requests(cwd, repo, callback)
-  gh({ 'pr', 'list', '--repo', repo, '--state', 'open', '--limit', '100', '--json', 'number,title,isDraft,author,headRefName' }, cwd, callback)
+  gh({ 'pr', 'list', '--repo', qualified_repo(repo), '--state', 'open', '--limit', '100', '--json', 'number,title,isDraft,author,headRefName' }, cwd, callback)
 end
 
 local threads_query = [[
@@ -82,12 +106,13 @@ function M.normalize_thread(node)
 end
 
 function M.threads(cwd, repo, number, callback)
-  local owner, name = repo:match '^([^/]+)/(.+)$'
+  local _, path = split_repo(repo)
+  local owner, name = path:match '^([^/]+)/(.+)$'
   local cursor
   pages(function(_, done)
     local args = { 'api', 'graphql', '-f', 'query=' .. threads_query, '-f', 'owner=' .. owner, '-f', 'name=' .. name, '-F', 'number=' .. number }
     if cursor then vim.list_extend(args, { '-f', 'after=' .. cursor }) end
-    gh(args, cwd, function(err, response)
+    api(repo, args, cwd, function(err, response)
       if err then return done(err) end
       local pr = response and response.data and response.data.repository and response.data.repository.pullRequest
       if not pr then return done 'PRのレビュースレッドを取得できません' end
@@ -100,19 +125,19 @@ function M.threads(cwd, repo, number, callback)
 end
 
 function M.submit(cwd, repo, number, payload, callback)
-  gh({ 'api', '--method', 'POST', '--input', '-', route(repo, number, 'reviews') }, cwd, callback, vim.json.encode(payload))
+  api(repo, { 'api', '--method', 'POST', '--input', '-', route(repo, number, 'reviews') }, cwd, callback, vim.json.encode(payload))
 end
 
 -- スレッドへの返信。下書きにはならず、即座に投稿される。comment_id はスレッド先頭コメントのID。
 function M.reply(cwd, repo, number, comment_id, body, callback)
-  gh({ 'api', '--method', 'POST', '--input', '-', route(repo, number, 'comments/' .. comment_id .. '/replies') },
+  api(repo, { 'api', '--method', 'POST', '--input', '-', route(repo, number, 'comments/' .. comment_id .. '/replies') },
     cwd, callback, vim.json.encode { body = body })
 end
 
-function M.set_resolved(cwd, thread_id, resolved, callback)
+function M.set_resolved(cwd, repo, thread_id, resolved, callback)
   local mutation = resolved and 'resolveReviewThread' or 'unresolveReviewThread'
   local query = string.format('mutation($id: ID!) { %s(input: {threadId: $id}) { thread { isResolved } } }', mutation)
-  gh({ 'api', 'graphql', '-f', 'query=' .. query, '-f', 'id=' .. thread_id }, cwd, callback)
+  api(repo, { 'api', 'graphql', '-f', 'query=' .. query, '-f', 'id=' .. thread_id }, cwd, callback)
 end
 
 return M

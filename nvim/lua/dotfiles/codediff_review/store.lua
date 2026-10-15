@@ -20,20 +20,40 @@ function M.load(repo, number)
   return type(value.drafts) == 'table' and value.drafts or {}
 end
 
-function M.save(ctx)
-  vim.fn.mkdir(directory(), 'p')
-  local path = M.path(ctx.repo, ctx.number)
-  local tmp = path .. '.tmp'
+local function write(path, value)
+  local made, mkdir_err = pcall(vim.fn.mkdir, directory(), 'p')
+  if not made then return false, tostring(mkdir_err) end
+  local tmp = path .. '.' .. vim.uv.os_getpid() .. '.tmp'
   local file, err = io.open(tmp, 'wb')
   if not file then return false, err end
-  local encoded, json = pcall(vim.json.encode, { version = 1, repo = ctx.repo, pr = ctx.number, drafts = ctx.drafts })
+  local encoded, json = pcall(vim.json.encode, value)
   local written, write_err = false, json
   if encoded then written, write_err = file:write(json) end
-  file:close()
-  if not written then os.remove(tmp); return false, tostring(write_err) end
+  local closed, close_err = file:close()
+  if not written or not closed then
+    os.remove(tmp)
+    return false, tostring(not written and write_err or close_err)
+  end
   local renamed, rename_err = os.rename(tmp, path)
   if not renamed then os.remove(tmp); return false, rename_err end
   return true
+end
+
+function M.save(ctx)
+  return write(M.path(ctx.repo, ctx.number), { version = 1, repo = ctx.repo, pr = ctx.number, drafts = ctx.drafts })
+end
+
+function M.load_picker()
+  local file = io.open(directory() .. '/picker.json', 'rb')
+  if not file then return {} end
+  local content = file:read '*a'
+  file:close()
+  local ok, value = pcall(vim.json.decode, content)
+  return ok and type(value) == 'table' and value or {}
+end
+
+function M.save_picker(opts)
+  return write(directory() .. '/picker.json', { pick_all = opts.pick_all, pick_sort = opts.pick_sort })
 end
 
 return M

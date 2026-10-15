@@ -260,7 +260,14 @@ require('telescope').setup {
       find_command = { 'rg', '--files', '--hidden', '--no-ignore', '--glob', '!node_modules', '--glob', '!.venv', '--glob', '!.git' },
     },
   },
-  extensions = { ['ui-select'] = { require('telescope.themes').get_dropdown() } },
+  extensions = { ['ui-select'] = { require('telescope.themes').get_dropdown {
+    layout_config = {
+      width = function(picker, columns)
+        if (picker.prompt_title or ''):match 'のレビューするPR$' then return math.floor(columns * 0.95) end
+        return math.min(columns, 80)
+      end,
+    },
+  }, specific_opts = { codediff_pr = require 'dotfiles.codediff_review.picker_display' } } },
 }
 pcall(require('telescope').load_extension, 'fzf')
 pcall(require('telescope').load_extension, 'ui-select')

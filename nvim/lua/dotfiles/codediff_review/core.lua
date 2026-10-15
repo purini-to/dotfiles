@@ -121,6 +121,7 @@ local bindings = {
   { 'n', 'next_comment', function() M.goto_comment(1) end, '次のコメント' },
   { 'n', 'prev_comment', function() M.goto_comment(-1) end, '前のコメント' },
   { 'n', 'list', function() M.list() end, 'コメント一覧' },
+  { 'n', 'submit', function() M.submit('comment') end, 'レビュー送信画面' },
 }
 
 local function maps(ctx, bufs)
@@ -198,15 +199,18 @@ local function bind(ctx, tab)
   sessions[tab] = ctx
   local selection = adapter.selection(tab)
   if selection then select_file(ctx, selection.path) end
-  ui.notify(string.format('PR #%d を開きました（下書き%d件）。c でコメント', ctx.number, #ctx.drafts))
+  ui.notify(string.format('PR #%d を開きました（下書き%d件）。c でコメント、%s でレビュー送信画面', ctx.number, #ctx.drafts, config.options.keymaps.submit or ':CodeDiffReview submit'))
 end
 
 -- ---- PRを開く -----------------------------------------------------------------
 
-local function ask_number()
+local picker_generation = 0
+
+local function ask_number(opts, alive)
   vim.ui.input({ prompt = 'PR番号: ' }, function(text)
+    if not alive() then return end
     local number = tonumber(text)
-    if number and number >= 1 and number % 1 == 0 then M.open(number, {}) end
+    if number and number >= 1 and number % 1 == 0 then M.open(number, opts) end
   end)
 end
 
@@ -216,21 +220,186 @@ local function format_pr(pr)
   return string.format('#%d %s%s  (@%s · %s)', pr.number, pr.isDraft and '[Draft] ' or '', pr.title, author, pr.headRefName or '')
 end
 
+local function repo_name(repo) return vim.fs.basename(repo) end
+
+local function sort_prs(items)
+  local order = config.options.pick_sort
+  table.sort(items, function(a, b)
+    local pa, pb = a.pr or a, b.pr or b
+    local ra, rb = repo_name(a.repo or ''), repo_name(b.repo or '')
+    local ka, kb
+    if order == 'number' then ka, kb = -pa.number, -pb.number
+    elseif order == 'title' then ka, kb = pa.title or '', pb.title or ''
+    elseif order == 'repo' then ka, kb = ra, rb
+    else ka, kb = pa.headRefName or '', pb.headRefName or '' end
+    if ka ~= kb then return ka < kb end
+    if ra ~= rb then return ra < rb end
+    if (pa.headRefName or '') ~= (pb.headRefName or '') then return (pa.headRefName or '') < (pb.headRefName or '') end
+    if pa.number ~= pb.number then return pa.number > pb.number end
+    return (a.cwd or '') < (b.cwd or '')
+  end)
+end
+
+local function sort_label() return '並び順: ' .. config.sorts[config.options.pick_sort] .. '…' end
+
+function M.choose_sort(done, alive)
+  vim.ui.select({ 'branch', 'title', 'number', 'repo' }, {
+    prompt = 'PRの並び順', format_item = function(key) return config.sorts[key] end,
+  }, function(key)
+    if alive and not alive() then return end
+    if key then config.options.pick_sort = key; config.save_picker() end
+    if done then done() end
+  end)
+end
+
 -- OpenのPR(Draft含む)を番号とタイトルで一覧し、選んだものを開く。取得できなければ番号入力にする。
+local function pick_pr(cwd, alive)
+  local opts = { cwd = cwd }
+  github.repository(cwd, nil, function(err, repo)
+    if not alive() then return end
+    if err then notify_error(err); return ask_number(opts, alive) end
+    opts.repo = repo
+    github.pull_requests(cwd, repo, function(list_err, prs)
+      if not alive() then return end
+      if list_err then notify_error(list_err); return ask_number(opts, alive) end
+      prs = prs or {}
+      for _, pr in ipairs(prs) do pr.repo = repo end
+      local function show()
+        if not alive() then return end
+        sort_prs(prs)
+        local choices = vim.list_extend(vim.list_extend({}, prs), { { manual = true }, { sort = true } })
+        vim.ui.select(choices, {
+          kind = 'codediff_pr',
+          prompt = repo_name(repo) .. ' のレビューするPR',
+          format_item = function(pr) return pr.sort and sort_label() or format_pr(pr) end,
+        }, function(pr)
+          if not alive() or not pr then return end
+          if pr.sort then return M.choose_sort(show, alive) end
+          if pr.manual then return ask_number(opts, alive) end
+          M.open(pr.number, opts)
+        end)
+      end
+      show()
+    end)
+  end)
+end
+
+function M.toggle_pick()
+  picker_generation = picker_generation + 1
+  config.options.pick_all = not config.options.pick_all
+  config.save_picker()
+  ui.notify('PR一覧: ' .. (config.options.pick_all and '全リポジトリ一括' or 'リポジトリ別'))
+end
+
+local function pick_all(repos, switch, alive)
+  local remaining, results = #repos, {}
+  local next_index, active, pumping = 1, 0, false
+  local pump
+  local function fetch(index, cwd)
+    github.repository(cwd, nil, function(err, repo)
+      if not alive() then return end
+      local function done(list_err, prs)
+        if not alive() then return end
+        if err or list_err then notify_error(cwd .. ': ' .. tostring(err or list_err)) end
+        local items = {}
+        for _, pr in ipairs(prs or {}) do
+          items[#items + 1] = { pr = pr, cwd = cwd, repo = repo }
+        end
+        results[index] = items
+        remaining = remaining - 1
+        active = active - 1
+        if remaining > 0 then return pump() end
+        local choices = {}
+        for _, group in ipairs(results) do vim.list_extend(choices, group) end
+        local function show()
+          if not alive() then return end
+          sort_prs(choices)
+          local entries = vim.list_extend(vim.list_extend({}, choices), { { sort = true }, { toggle = true } })
+          vim.ui.select(entries, {
+            kind = 'codediff_pr',
+            prompt = '全リポジトリのレビューするPR',
+            format_item = function(item)
+              if item.toggle then return '表示切替 → リポジトリ別' end
+              if item.sort then return sort_label() end
+              return '[' .. repo_name(item.repo or item.cwd) .. '] ' .. format_pr(item.pr)
+            end,
+          }, function(item)
+            if not alive() or not item then return end
+            if item.toggle then return switch() end
+            if item.sort then return M.choose_sort(show, alive) end
+            M.open(item.pr.number, { cwd = item.cwd, repo = item.repo })
+          end)
+        end
+        show()
+      end
+      if err then return done() end
+      github.pull_requests(cwd, repo, done)
+    end)
+  end
+  pump = function()
+    if pumping or not alive() then return end
+    pumping = true
+    while active < 4 and next_index <= #repos and alive() do
+      local index = next_index
+      next_index, active = next_index + 1, active + 1
+      fetch(index, repos[index])
+    end
+    pumping = false
+  end
+  pump()
+end
+
+local function scan_repos(cwd, alive, done)
+  local repos = { cwd }
+  -- .gitの内部とシンボリックリンクは辿らない。通常の入れ子リポジトリも対象。
+  local iterator = vim.fs.dir(cwd, { depth = math.huge, skip = function(path) return vim.fs.basename(path) ~= '.git' end })
+  local function step()
+    if not alive() then return end
+    -- キャッシュは使わず毎回検出するが、走査中も入力・描画を処理できるよう分割する。
+    for _ = 1, 200 do
+      local path, kind = iterator()
+      if not path then table.sort(repos); return done(repos) end
+      if vim.fs.basename(path) == '.git' and (kind == 'directory' or kind == 'file') then
+        local root = vim.fs.dirname(vim.fs.joinpath(cwd, path))
+        if root ~= cwd then repos[#repos + 1] = root end
+      end
+    end
+    vim.defer_fn(step, 1)
+  end
+  step()
+end
+
 function M.pick()
   if vim.fn.executable 'gh' ~= 1 then return notify_error 'gh が見つかりません' end
+  picker_generation = picker_generation + 1
+  local generation = picker_generation
+  local function alive() return generation == picker_generation end
   local cwd = vim.fs.root(0, '.git') or vim.fn.getcwd()
-  github.repository(cwd, nil, function(err, repo)
-    if err then notify_error(err); return ask_number() end
-    github.pull_requests(cwd, repo, function(list_err, prs)
-      if list_err then notify_error(list_err); return ask_number() end
-      prs = vim.list_extend(prs or {}, { { manual = true } })
-      vim.ui.select(prs, { prompt = repo .. ' のレビューするPR', format_item = format_pr }, function(pr)
-        if not pr then return end
-        if pr.manual then return ask_number() end
-        M.open(pr.number, { repo = repo })
+  scan_repos(cwd, alive, function(repos)
+    local show
+    local function switch()
+      M.toggle_pick()
+      generation = picker_generation
+      show()
+    end
+    show = function()
+      if not alive() then return end
+      if config.options.pick_all then return pick_all(repos, switch, alive) end
+      if #repos == 1 then return pick_pr(cwd, alive) end
+      local choices = vim.list_extend(vim.list_extend({}, repos), { { toggle = true } })
+      vim.ui.select(choices, {
+        prompt = 'レビューするリポジトリ',
+        format_item = function(root)
+          if type(root) == 'table' then return '表示切替 → 全リポジトリ一括' end
+          return repo_name(root)
+        end,
+      }, function(root)
+        if not alive() or not root then return end
+        if type(root) == 'table' then return switch() end
+        pick_pr(root, alive)
       end)
-    end)
+    end
+    show()
   end)
 end
 
@@ -239,7 +408,7 @@ function M.open(number, opts)
   for _, tool in ipairs { 'gh', 'git' } do
     if vim.fn.executable(tool) ~= 1 then return notify_error(tool .. ' が見つかりません') end
   end
-  local cwd = vim.fs.root(0, '.git') or vim.fn.getcwd()
+  local cwd = opts.cwd or vim.fs.root(0, '.git') or vim.fn.getcwd()
   local remote = opts.remote or config.options.remote
   if not remote:match '^[%w_.%-/]+$' then return notify_error '不正なリモート名です' end
   local token = {}
@@ -275,7 +444,7 @@ function M.open(number, opts)
         end
         token.ctx = ctx
         -- CodeDiffOpenが発火した時点で、できたタブにこのPRを結び付ける。
-        local ok, open_err = pcall(vim.cmd, string.format('CodeDiff pr %d --remote %s', number, remote))
+      local ok, open_err = pcall(vim.cmd, string.format('CodeDiff pr %d --remote %s --repo %s', number, remote, vim.fn.fnameescape(cwd)))
         if not ok then fail(open_err) end
       end
       github.files(cwd, repo, number, function(files_err, files)
@@ -328,10 +497,8 @@ end
 local function comment_options(ctx, pos)
   local context = assist_context(ctx, pos.side, pos.line, pos.start_line)
   local lines = vim.split(context, '\n', { plain = true })
-  table.insert(lines, 5, '```diff')
-  lines[#lines + 1] = '```'
   return {
-    context = lines, context_title = ' ' .. ctx.path .. ' · 対象の差分 ',
+    context = lines, context_title = ' ' .. ctx.path .. ' · 対象の差分 ', context_path = ctx.path,
     save_label = '下書き保存',
     assist = function(text, done) return assist.request('comment', context, text, done) end,
   }
@@ -498,7 +665,7 @@ function M.resolve()
     if not resolve and not thread.can_unresolve then return warn 'このスレッドを再開する権限がありません' end
     thread.resolved = resolve -- 先に画面へ反映し、失敗したら戻す
     render(ctx)
-    github.set_resolved(ctx.cwd, thread.id, resolve, function(err)
+    github.set_resolved(ctx.cwd, ctx.repo, thread.id, resolve, function(err)
       if err then
         thread.resolved = not resolve
         render(ctx)
@@ -706,6 +873,7 @@ function M.status()
 end
 
 function M.close()
+  picker_generation = picker_generation + 1
   local ctx = sessions[vim.api.nvim_get_current_tabpage()]
   if ctx then
     detach(ctx)

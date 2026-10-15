@@ -3,21 +3,65 @@ local Popup = require 'nui.popup'
 local Layout = require 'nui.layout'
 local M = {}
 local namespace = vim.api.nvim_create_namespace 'codediff-review-comments'
+local diff_namespace = vim.api.nvim_create_namespace 'codediff-review-context-diff'
+
+local function highlight_diff(buf, lines, path)
+  local sides = { LEFT = { code = {}, rows = {} }, RIGHT = { code = {}, rows = {} } }
+  for i, line in ipairs(lines) do
+    local prefix, kind, code = line:match '^([> ]([+%- ]) [%d ]+| )(.*)$'
+    if not prefix then
+      prefix, code = line:match '^([> ]%s*%d+ )(.*)$'
+      kind = ' '
+    end
+    if prefix then
+      local group = kind == '+' and 'DiffAdd' or kind == '-' and 'DiffDelete' or nil
+      if group then
+        vim.api.nvim_buf_set_extmark(buf, diff_namespace, i - 1, 0, { end_row = i, hl_group = group, hl_eol = true, priority = 90 })
+      end
+      vim.api.nvim_buf_set_extmark(buf, diff_namespace, i - 1, 0, { end_col = #prefix, hl_group = 'LineNr', priority = 100 })
+      if line:sub(1, 1) == '>' then
+        vim.api.nvim_buf_set_extmark(buf, diff_namespace, i - 1, 0, { end_col = 1, hl_group = 'DiagnosticInfo', priority = 110 })
+      end
+      for side, data in pairs(sides) do
+        if not (side == 'LEFT' and kind == '+' or side == 'RIGHT' and kind == '-') then
+          data.code[#data.code + 1], data.rows[#data.rows + 1] = code, { row = i - 1, col = #prefix }
+        end
+      end
+    elseif line:match '^@@' then
+      vim.api.nvim_buf_set_extmark(buf, diff_namespace, i - 1, 0, { end_col = #line, hl_group = 'DiffText' })
+    end
+  end
+  local ft = vim.filetype.match { filename = path }
+  for _, data in pairs(sides) do
+    for i, segments in ipairs(require('dotfiles.codediff_review.markdown').highlight_code(data.code, ft)) do
+      local pos = data.rows[i]
+      local col = pos.col
+      for _, segment in ipairs(segments) do
+        if segment[2] and #segment[1] > 0 then
+          vim.api.nvim_buf_set_extmark(buf, diff_namespace, pos.row, col, {
+            end_col = col + #segment[1], hl_group = segment[2], hl_mode = 'combine', priority = 120,
+          })
+        end
+        col = col + #segment[1]
+      end
+    end
+  end
+end
 
 function M.notify(text, level) vim.notify('codediff-review: ' .. text, level or vim.log.levels.INFO) end
 
-local function popup(title, enter)
+local function popup(title, enter, filetype)
   return Popup {
     enter = enter, focusable = true,
     border = { style = 'rounded', text = { top = title, top_align = 'left' } },
-    buf_options = { filetype = 'markdown', bufhidden = 'wipe' },
+    buf_options = { filetype = filetype or 'markdown', bufhidden = 'wipe' },
     win_options = { wrap = true, linebreak = false, conceallevel = 2, concealcursor = 'nvic', winhighlight = 'Normal:NormalFloat,FloatBorder:FloatBorder' },
   }
 end
 
 -- 複数行入力。<C-s>か<CR>(ノーマル)で確定、qで取消。callbackには確定した本文かnilを渡す。
 -- opts: { initial, title, allow_empty, assist = function(text, done) -> job,
---         context = 行のリスト, context_title, save_label }
+--         context = 行のリスト, context_title, context_path, save_label }
 --   assist があれば <C-g> でローカルLLMに続き/案を頼む（結果は本文を置き換える。u で戻せる）。
 --   context があれば入力欄の上に読み取り専用の一覧を出す（<C-d>/<C-u> でスクロール）。
 function M.input(opts, callback)
@@ -31,21 +75,46 @@ function M.input(opts, callback)
     return text .. ' '
   end
   editor.border:set_text('bottom', idle_footer(), 'left')
+  local hints = popup(' 操作ヒント ', false)
+  local save_label = opts.save_label or '下書き保存'
+  local hint_lines = {
+    'Ctrl-S: ' .. save_label .. (save_label == '下書き保存' and '（GitHubには未送信）' or '（GitHubへ投稿）'),
+    'Ctrl-P: Preview · Esc → q: 保存せず取消',
+  }
+  if opts.assist then
+    table.insert(hint_lines, 2, 'Ctrl-G: AI補完（空欄なら案、入力ありなら推敲）· u: 戻す（ノーマル）')
+  end
+  vim.api.nvim_buf_set_lines(hints.bufnr, 0, -1, false, hint_lines)
+  vim.bo[hints.bufnr].modifiable = false
   local context
   if opts.context then
-    context = popup(opts.context_title or ' 会話 · Ctrl-D/U: スクロール ', false)
+    context = popup(opts.context_title or ' 会話 · Ctrl-D/U: スクロール ', false, opts.context_path and '' or 'markdown')
     vim.api.nvim_buf_set_lines(context.bufnr, 0, -1, false, opts.context)
     vim.bo[context.bufnr].modifiable = false
-    vim.b[context.bufnr].codediff_review_markdown = true
+    if opts.context_path then
+      highlight_diff(context.bufnr, opts.context, opts.context_path)
+    else
+      vim.b[context.bufnr].codediff_review_markdown = true
+    end
   end
   local function geometry()
-    local height = math.max(context and 6 or 3, math.min(context and (#opts.context + 12) or 11, vim.o.lines - 4))
-    local boxes = { Layout.Box(editor, { size = context and math.min(9, height - 3) or height }) }
+    local width = math.max(1, math.min(context and 100 or 84, vim.o.columns - 4))
+    local hint_height = 0
+    for _, line in ipairs(hint_lines) do hint_height = hint_height + math.ceil(vim.fn.strdisplaywidth(line) / math.max(1, width - 2)) end
+    local height = math.max(context and 6 or 3, math.min(context and (#opts.context + 12) or 11, vim.o.lines - 4 - hint_height - 2))
+    local boxes = { Layout.Box(editor, { size = context and math.min(9, height - 3) or height }), Layout.Box(hints, { size = hint_height + 2 }) }
     if context then table.insert(boxes, 1, Layout.Box(context, { grow = 1 })) end
-    return { relative = 'editor', position = '50%', size = { width = math.max(1, math.min(context and 100 or 84, vim.o.columns - 4)), height = height } }, Layout.Box(boxes, { dir = 'col' })
+    return { relative = 'editor', position = '50%', size = { width = width, height = height + hint_height + 2 } }, Layout.Box(boxes, { dir = 'col' })
   end
   local layout = Layout(geometry())
   layout:mount()
+  local function ai_status(status)
+    hint_lines[2] = 'Ctrl-G: AI補完 · ' .. status
+    vim.bo[hints.bufnr].modifiable = true
+    vim.api.nvim_buf_set_lines(hints.bufnr, 0, -1, false, hint_lines)
+    vim.bo[hints.bufnr].modifiable = false
+    layout:update(geometry())
+  end
   local win = editor.winid
   vim.wo[win].conceallevel = 0 -- WriteではMarkdown記号を隠さない。Previewだけ描画する。
   local finished, job, preview, resize = false, nil, nil, nil
@@ -68,16 +137,23 @@ function M.input(opts, callback)
   local function assist()
     if not opts.assist or job then return end
     local tick = vim.api.nvim_buf_get_changedtick(buf)
+    local original = text()
+    ai_status('生成中… (' .. llm.model .. ')')
     editor.border:set_text('bottom', ' AI生成中… (' .. llm.model .. ') · q: 取消 ', 'left')
-    job = opts.assist(text(), function(result, err)
+    job = opts.assist(original, function(result, err)
       job = nil
       if finished then return end
       editor.border:set_text('bottom', idle_footer(), 'left')
-      if not result then return M.notify(err or 'AI補助に失敗しました', vim.log.levels.WARN) end
+      if not result then
+        ai_status('失敗（:messages で詳細を確認）')
+        return M.notify(err or 'AI補助に失敗しました', vim.log.levels.WARN)
+      end
       if vim.api.nvim_buf_get_changedtick(buf) ~= tick then
+        ai_status('手入力を優先（AI結果は未反映）')
         return M.notify('生成中に本文が編集されたため、AIの結果は適用しません。Ctrl-G で再生成できます', vim.log.levels.WARN)
       end
       vim.api.nvim_buf_set_lines(buf, 0, -1, false, vim.split(result, '\n', { plain = true }))
+      ai_status(result == original and '完了（本文の変更なし）' or '反映済み・未保存（ノーマルモードの u で戻す）')
     end)
   end
   vim.keymap.set({ 'i', 'n' }, '<C-s>', save, { buffer = buf, silent = true })
@@ -88,6 +164,8 @@ function M.input(opts, callback)
   end, { buffer = buf, silent = true })
   if not opts.context then vim.keymap.set('n', '<CR>', save, { buffer = buf, silent = true }) end
   vim.keymap.set('n', 'q', function() finish(nil) end, { buffer = buf, silent = true })
+  vim.keymap.set('n', 'q', function() finish(nil) end, { buffer = hints.bufnr, silent = true })
+  vim.api.nvim_create_autocmd('WinClosed', { pattern = tostring(hints.winid), once = true, callback = function() finish(nil) end })
   if context then
     local context_win = context.winid
     for key, scroll in pairs { ['<C-d>'] = vim.keycode '<C-d>', ['<C-u>'] = vim.keycode '<C-u>' } do

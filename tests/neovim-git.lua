@@ -11,7 +11,8 @@ local mode = 'success'
 llm.chat = function(opts, callback)
   calls = calls + 1
   assert(opts.system:find('秘密値を引用しない', 1, true))
-  assert(opts.num_ctx == 4096 and opts.num_predict == 160)
+  assert(opts.system:find('type(scope): 要約', 1, true) and opts.system:find('- ', 1, true), 'prompt must request Conventional Commits with bullet body')
+  assert(opts.num_ctx == 8192 and opts.num_predict == 512)
   assert(#opts.user <= 6000, 'commit input must stay bounded')
   assert(vim.str_utfindex(opts.user, 'utf-32') >= 0, 'excerpts must preserve UTF-8')
   inputs[#inputs + 1] = opts.user

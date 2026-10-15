@@ -13,7 +13,8 @@ local prompts = {
   comment = {
     continue = 'あなたはレビュアーの文章を推敲する編集者。最後の欄はPR作者へ送る下書き。入力の質問に回答しない。'
       .. '質問は質問のまま、対象・尋ねたいこと・不確かさを保つ。文字数を増やすことは目的ではない。'
-      .. '書きかけは必要な続きだけ補い、作者へ送る丁寧な完成文にする。括弧書きの編集メモは本文から除く。'
+      .. 'レビューのラベル・接頭辞は種類を限定せず、表記・位置・要求の強さをそのまま保持する。ラベルを削除・変更したり、未指定のラベルを追加しない。'
+      .. '書きかけは必要な続きだけ補い、作者へ送る丁寧な完成文にする。括弧書きの編集メモは本文から除くが、レビューラベルは編集メモではない。'
       .. 'そのまま返してよいのは、既に丁寧で明確な完成文だけ。未完の文や編集メモつきの入力はそのまま返さない。'
       .. '差分は対象の確認だけに使い、別の論点や説明を足さない。入力と同じ言語で本文だけを出す。',
     draft = 'GitHubのコードレビュー補助。対象の差分に、差分から確認できる明らかな不具合や確認すべき点がある場合に限り、'
@@ -36,6 +37,10 @@ local prompts = {
 
 local max_context_chars = 6000
 
+local function label_prefix(text)
+  return text:match '^%[[^%]\n]+%]:?' or text:match '^%([%w_%-]+%):?' or text:match '^[%w_%-]+:'
+end
+
 -- kind: comment|reply|summary。text が空なら案を出し、あれば続きを書いて整える。
 -- 戻り値はジョブ(:kill(signal))。callback(text|nil, err|nil)
 function M.request(kind, context, text, callback)
@@ -43,7 +48,15 @@ function M.request(kind, context, text, callback)
   if vim.fn.strchars(context) > max_context_chars then context = vim.fn.strcharpart(context, 0, max_context_chars) .. '\n…（省略）' end
   local label = kind == 'comment' and text ~= '' and '作者に送るコメントの下書き（回答せず推敲する）' or '入力'
   local user = '## 文脈\n' .. context .. '\n\n## ' .. label .. '\n' .. (text == '' and '（空）' or text)
-  return llm.chat({ system = prompt .. common, user = user, temperature = 0.3, num_ctx = 8192, num_predict = 600, timeout = 90 }, callback)
+  local review_label = kind == 'comment' and label_prefix(text)
+  return llm.chat({ system = prompt .. common, user = user, temperature = 0.3, num_ctx = 8192, num_predict = 600, timeout = 90 }, function(result, err)
+    if result and review_label and result:sub(1, #review_label) ~= review_label then
+      local generated_label = label_prefix(result)
+      if generated_label then result = vim.trim(result:sub(#generated_label + 1)) end
+      result = review_label .. ' ' .. result
+    end
+    callback(result, err)
+  end)
 end
 
 -- 参照用: 実際に使うプロンプト（テスト・調査用）
