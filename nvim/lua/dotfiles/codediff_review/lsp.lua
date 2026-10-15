@@ -1,8 +1,8 @@
 -- PRの差分はCodeDiffの仮想バッファ（codediff://）で、LSPが付かない（CodeDiffが意図して外している）。
 -- grd / gri などを押したら、同じファイル・同じ位置を実ファイルとして別タブで開き、LSPが付いてから同じキーを実行する。
--- 手元の作業ツリーがPR（左側はbase）と同じ内容ならそれを開き、違えばそのコミットを切り出したgit worktreeで開く。
+-- 手元の作業ツリーがPR（左側はbase）と同じ内容ならそれを開く。右側で違えば、未コミットの変更がなければ
+-- 手元を gh pr checkout でPRのブランチに切り替えて開く。切り替えられなければそのコミットを切り出したgit worktreeで開く。
 -- ponytail: worktreeには node_modules などの依存がないので、外部パッケージへのジャンプは失敗しうる。
--- 依存まで必要なら gh pr checkout で手元をPRのブランチにする（同じ内容になるので手元で開く）。
 local adapter = require 'dotfiles.codediff_review.adapter'
 local M = {}
 local worktrees = {} -- path -> repository root。終了時に消す
@@ -16,10 +16,33 @@ local function git(args, callback)
   end))
 end
 
--- rev の内容を持つ作業ディレクトリ。手元が同じ内容なら手元、違えば rev を切り出したworktree。
-local function checkout(root, rev, path, callback)
-  git({ '-C', root, 'diff', '--quiet', rev, '--', path }, function(code)
-    if code == 0 then return callback(root) end
+local tried = {} -- root#number -> true。gh pr checkout は1PRにつき1回だけ試す
+
+-- 未コミットの変更がなければ、手元をPRのブランチに切り替える。callback(切り替えたか)。
+local function switch(root, pr, callback)
+  local key = root .. '#' .. pr.number
+  if tried[key] then return callback(false) end
+  git({ '-C', root, 'status', '--porcelain', '--untracked-files=no' }, function(code, out)
+    if code ~= 0 or out ~= '' then return callback(false) end
+    tried[key] = true
+    git({ '-C', root, 'rev-parse', '--abbrev-ref', 'HEAD' }, function(_, before)
+      vim.system({ 'gh', 'pr', 'checkout', tostring(pr.number), '--repo', pr.repo }, { cwd = root, text = true }, vim.schedule_wrap(function(result)
+        if result.code ~= 0 then
+          notify('PRのブランチに切り替えられません: ' .. vim.trim(result.stderr or ''), vim.log.levels.WARN)
+          return callback(false)
+        end
+        notify(string.format('%s をPR #%d のブランチに切り替えました（元: %s。戻すには git switch -）', vim.fs.basename(root), pr.number, before))
+        callback(true)
+      end))
+    end)
+  end)
+end
+
+-- rev の内容を持つ作業ディレクトリ。手元が同じ内容なら手元。違えば（pr があれば）手元をPRのブランチに切り替える。
+-- それでも違えば（未コミットの変更がある・PRが更新された等）rev を切り出したworktree。
+local function checkout(root, rev, path, pr, callback)
+  local function same(cb) git({ '-C', root, 'diff', '--quiet', rev, '--', path }, function(code) cb(code == 0) end) end
+  local function worktree()
     -- Neovimのプロセスごとに分ける（起動時の掃除で、他のNeovimが使っているworktreeを消さないため）。
     local dir = string.format('%s/%d/%s', base(), vim.uv.os_getpid(), vim.fn.sha256(root .. '@' .. rev):sub(1, 16))
     if worktrees[dir] then return callback(dir) end
@@ -30,6 +53,14 @@ local function checkout(root, rev, path, callback)
         worktrees[dir] = root
         callback(dir)
       end)
+    end)
+  end
+  same(function(ok)
+    if ok then return callback(root) end
+    if not pr then return worktree() end
+    switch(root, pr, function(switched)
+      if not switched then return worktree() end
+      same(function(now) if now then callback(root) else worktree() end end)
     end)
   end)
 end
@@ -69,7 +100,7 @@ function M.run(ctx, key)
   end
   git({ '-C', ctx.cwd, 'rev-parse', '--show-toplevel' }, function(code, root)
     if code ~= 0 then return notify('Gitリポジトリが見つかりません: ' .. ctx.cwd, vim.log.levels.ERROR) end
-    checkout(root, rev, path, function(dir, checkout_err)
+    checkout(root, rev, path, pos.side == 'RIGHT' and ctx.number and ctx.repo and ctx or nil, function(dir, checkout_err)
       if not dir then return notify(checkout_err, vim.log.levels.ERROR) end
       local file = dir .. '/' .. path
       if not vim.uv.fs_stat(file) then return notify('ファイルがありません: ' .. file, vim.log.levels.WARN) end

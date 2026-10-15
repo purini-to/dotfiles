@@ -807,8 +807,8 @@ do
   local cursor, base_revision = adapter.cursor, adapter.base_revision
   adapter.cursor = function() return { side = 'RIGHT', line = 2 } end
   local start_tab = vim.api.nvim_get_current_tabpage()
-  local function run(key)
-    review_lsp.run({ cwd = work, head_sha = pr_head, path = 'src/x.lua', tab = start_tab }, key)
+  local function run(key, ctx)
+    review_lsp.run(ctx or { cwd = work, head_sha = pr_head, path = 'src/x.lua', tab = start_tab }, key)
     assert(vim.wait(5000, function() return vim.api.nvim_get_current_tabpage() ~= start_tab end), 'タブが開かない')
     local buf = vim.api.nvim_get_current_buf()
     local fired = false
@@ -837,6 +837,23 @@ do
   assert(vim.wait(5000, function() return vim.uv.fs_stat(worktrees .. '/999999999') == nil and not sh('git worktree list'):find('stale', 1, true) end), '終了したNeovimのworktreeを消す')
   assert(vim.uv.fs_stat(alive) and sh('git worktree list'):find(alive, 1, true), '起動中のNeovimのworktreeは残す')
   sh('git worktree remove --force ' .. alive)
+  -- PRの番号がわかれば、未コミットの変更がないときは手元をPRのブランチに切り替えて開く（gh pr checkout）。
+  local bin = vim.fn.tempname()
+  vim.fn.mkdir(bin, 'p')
+  vim.fn.writefile({ '#!/bin/sh', 'echo "$@" >> "' .. bin .. '/calls"', 'git checkout -q pr' }, bin .. '/gh')
+  vim.fn.setfperm(bin .. '/gh', 'rwxr-xr-x')
+  local path_env = vim.env.PATH
+  vim.env.PATH = bin .. ':' .. path_env
+  local pr_ctx = { cwd = work, head_sha = pr_head, path = 'src/x.lua', tab = start_tab, number = 7, repo = 'o/r' }
+  name = run('grt', pr_ctx)
+  assert(name:find('/codediff-review/worktrees/', 1, true) and vim.fn.filereadable(bin .. '/calls') == 0, '未コミットの変更があれば切り替えずworktree')
+  sh [[git checkout -q -- . && git branch pr && printf 'main\n' > src/x.lua && git commit -qam main]]
+  name, pos = run('grt', pr_ctx)
+  assert(name == work .. '/src/x.lua' and pos[1] == 2, 'PRのブランチに切り替えて手元で開く: ' .. name)
+  assert(sh 'git rev-parse --abbrev-ref HEAD' == 'pr' and vim.deep_equal(vim.fn.readfile(bin .. '/calls'), { 'pr checkout 7 --repo o/r' }))
+  vim.env.PATH = path_env
+  review_lsp.cleanup()
+  vim.fn.delete(bin, 'rf')
   adapter.cursor, adapter.base_revision = cursor, base_revision
   vim.fn.delete(work, 'rf')
 end
