@@ -51,15 +51,15 @@ end
 -- ---- カーソル位置のコメント -------------------------------------------------
 
 -- コメント自身の行、または反対側の対応行(印を付けている行)にカーソルがあれば対象とする。
--- 古いスレッドはRIGHTの1行目に載っている。
+-- 古いスレッド・要確認の下書きは近い行（わからなければRIGHTの1行目）に載っている。
 local function covers(entry, pos, changes)
   local side, line = card.anchor(entry)
   local placed = entry.line and not entry.stale
   if side == pos.side then
     if placed then return pos.line >= (entry.start_line or entry.line) and pos.line <= entry.line end
-    return pos.line == 1
+    return pos.line == line
   end
-  return adapter.counterpart(changes, side, line) == pos.line or (not placed and pos.line == 1)
+  return adapter.counterpart(changes, side, line) == pos.line or (not placed and line == 1 and pos.line == 1)
 end
 
 -- { threads = {...}, drafts = {...} }
@@ -136,7 +136,7 @@ local bindings = {
   { 'n', 'list', function() M.list() end, 'コメント一覧' },
   { 'n', 'next_pr', function() M.goto_pr(1) end, '次のPRのタブ' },
   { 'n', 'prev_pr', function() M.goto_pr(-1) end, '前のPRのタブ' },
-  { 'n', 'submit', function() M.submit('comment') end, 'レビュー送信画面' },
+  { 'n', 'submit', function() M.submit() end, 'レビュー送信画面' },
 }
 
 local function maps(ctx, bufs)
@@ -214,6 +214,42 @@ local function select_file(ctx, path)
   vim.schedule(function() attempt_render(ctx, generation, 0) end)
 end
 
+-- 古いスレッドと要確認の下書きは今の行に載せられない。元のコミットからの差分で元の行を追い、
+-- 書き換えられていても近い行（near_line）にカードを出す。差分を取れなければ元の行のまま。
+local function place(ctx)
+  local base = adapter.base_revision(ctx.tab)
+  local jobs, ranges, found = {}, {}, {}
+  local function add(entry, line, from, to, path)
+    if not line then return end
+    entry.near_line = line
+    if not (from and to) or from == to then return end
+    ranges[from .. '..' .. to] = { from, to }
+    jobs[#jobs + 1] = { entry = entry, line = line, key = from .. '..' .. to, path = path }
+  end
+  for _, thread in ipairs(ctx.threads) do
+    -- ponytail: 変更前(LEFT)は当時のbaseがわからないので元の行のまま。PRのbaseが動くとずれる。
+    if not thread.line then add(thread, thread.original_line, thread.side == 'RIGHT' and thread.original_commit, ctx.head_sha, thread.path) end
+  end
+  for _, draft in ipairs(ctx.drafts) do
+    if draft.stale and draft.side == 'LEFT' then
+      local file = file_info(ctx, draft.path)
+      add(draft, draft.line, draft.base_sha, base, file and file.previous_filename or draft.path)
+    elseif draft.stale then
+      add(draft, draft.line, draft.head_sha, ctx.head_sha, draft.path)
+    end
+  end
+  local remaining = vim.tbl_count(ranges)
+  for key, range in pairs(ranges) do
+    relocate.diff(ctx.cwd, range[1], range[2], function(_, files)
+      found[key] = files or {}
+      remaining = remaining - 1
+      if remaining > 0 or sessions[ctx.tab] ~= ctx then return end
+      for _, job in ipairs(jobs) do job.entry.near_line = relocate.near(found[job.key], job.path, job.line) end
+      render(ctx)
+    end)
+  end
+end
+
 -- 下書きを作った時のHEAD/baseが今の表示と違えば、行のずれを追って新しいコミットへ移す。
 -- 書き換えられた行などで移せない下書きは要確認(stale)にして、送信には含めない（gM で手で移す）。
 local function migrate(ctx)
@@ -254,6 +290,7 @@ local function migrate(ctx)
         stale = stale + 1
       end
     end
+    if stale > 0 then place(ctx) end
     save(ctx)
     render(ctx)
     local message = string.format('PR #%d が更新されています。下書き%d件を新しいHEADへ移しました', ctx.number, moved)
@@ -283,6 +320,7 @@ local function bind(ctx, tab)
   ui.notify(string.format('PR #%d を開きました（下書き%d件）。c でコメント、%s でレビュー送信画面', ctx.number, #ctx.drafts, config.options.keymaps.submit or ':CodeDiffReview submit'))
   if ctx.group then table.insert(ctx.group.ctxs, math.min(ctx.group_index or math.huge, #ctx.group.ctxs + 1), ctx) end
   ctx.group_index = nil
+  place(ctx)
   migrate(ctx)
   if ctx.on_bound then
     local on_bound = ctx.on_bound
@@ -803,17 +841,20 @@ local function thread_lines(thread)
   return lines
 end
 
+local function draft_lines(draft)
+  local lines = { '✎ 下書き  ' .. card.date(draft) }
+  vim.list_extend(lines, vim.tbl_map(function(l) return '  ' .. l end, vim.split(draft.body, '\n', { plain = true })))
+  lines[#lines + 1] = ''
+  return lines
+end
+
 function M.preview()
   local ctx = current()
   local pos = ctx and position(ctx)
   if not pos then return end
   local found, lines = entries_at(ctx, pos), {}
   for _, thread in ipairs(found.threads) do vim.list_extend(lines, thread_lines(thread)) end
-  for _, draft in ipairs(found.drafts) do
-    lines[#lines + 1] = '✎ 下書き  ' .. card.date(draft)
-    vim.list_extend(lines, vim.tbl_map(function(l) return '  ' .. l end, vim.split(draft.body, '\n', { plain = true })))
-    lines[#lines + 1] = ''
-  end
+  for _, draft in ipairs(found.drafts) do vim.list_extend(lines, draft_lines(draft)) end
   ui.preview(lines)
 end
 
@@ -823,6 +864,7 @@ local function refresh_ctx(ctx, quiet)
   github.threads(ctx.cwd, ctx.repo, ctx.number, function(err, threads)
     if err then return notify_error(err) end
     ctx.threads = threads
+    if ctx.tab then place(ctx) end
     if ctx.path and ctx.tab then select_file(ctx, ctx.path) end
     if not quiet then ui.notify(string.format('レビュースレッドを%d件取得しました', #threads)) end
   end)
@@ -932,7 +974,7 @@ end
 -- 現在のファイルでは左右どちらのコメントも「右側の行」に換算して並べる。
 local function sort_key(ctx, entry)
   local side, line = card.anchor(entry)
-  if not entry.line or entry.stale then return 0 end
+  if not ((entry.line and not entry.stale) or entry.near_line) then return 0 end
   if side == 'LEFT' and entry.path == ctx.path then return math.max(adapter.counterpart(adapter.changes(ctx.tab), 'LEFT', line), 0) end
   return line
 end
@@ -1000,7 +1042,13 @@ function M.list()
   if #all == 0 then return ui.notify 'このPRにコメントはありません' end
   local prompt = ctx.group and string.format('%d件のPRのコメント（選択でジャンプ）', #ctx.group.ctxs)
     or string.format('PR #%d のコメント（選択でジャンプ）', ctx.number)
-  vim.ui.select(all, { prompt = prompt, format_item = function(entry) return format_entry(entry, ctx.group and owners[entry].repo) end }, function(entry)
+  ui.select_with_preview(all, {
+    prompt = prompt,
+    format_item = function(entry) return format_entry(entry, ctx.group and owners[entry].repo) end,
+    preview = function(entry)
+      return vim.list_extend({ where(entry), '' }, entry.kind == 'thread' and thread_lines(entry) or draft_lines(entry))
+    end,
+  }, function(entry)
     if entry then jump(owners[entry], entry) end
   end)
 end
@@ -1206,9 +1254,18 @@ end
 
 -- 総評の入力と送信内容の確認を1画面にまとめる: 上に種別と全コメント、下に総評。Ctrl-sで送信。
 -- まとめてレビュー中は全PRを送る。総評はPRごとの見出しの下に書く。下書きが送れないPRは除外して通知する。
+-- kind を省くと（gS）、下書きがあればコメント、なければ種類（コメント / 承認 / 変更を依頼）を選ぶ。
 function M.submit(kind)
   local ctx = current()
   if not ctx then return end
+  if not kind then
+    for _, member in ipairs(ctx.group and ctx.group.ctxs or { ctx }) do
+      if #member.drafts > 0 then return M.submit 'comment' end
+    end
+    return vim.ui.select({ 'comment', 'approve', 'request_changes' }, {
+      prompt = 'レビューの種類', format_item = function(choice) return event_labels[events[choice]] end,
+    }, function(choice) if choice then M.submit(choice) end end)
+  end
   local event = events[kind]
   if not event then return warn 'submit comment|approve|request_changes のいずれかを指定してください' end
   local group = ctx.group

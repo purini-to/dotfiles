@@ -240,7 +240,9 @@ assert(card_text(outdated, 80):find(icons.outdated .. ' 古い', 1, true) and ca
 local done_outdated = vim.tbl_extend('force', outdated, { resolved = true })
 assert(card_text(done_outdated, 80):find(icons.resolved .. ' 解決済み', 1, true) and card_text(done_outdated, 80):find(icons.outdated .. ' 古い', 1, true), '折りたたみでも古い状態を残す')
 local side, line = card.anchor(outdated)
-assert(side == 'RIGHT' and line == 1, '古いスレッドはファイル先頭行')
+assert(side == 'RIGHT' and line == 1, '近い行がわからない古いスレッドはファイル先頭行')
+side, line = card.anchor(vim.tbl_extend('force', outdated, { side = 'LEFT', near_line = 7 }))
+assert(side == 'LEFT' and line == 7, '古いスレッドは元の行を追った近い行')
 local ctx_for_card = {
   path = 'new.lua',
   threads = { open_thread, { kind = 'thread', path = 'other.lua', line = 1, comments = {} } },
@@ -387,7 +389,7 @@ local gh = package.loaded['dotfiles.codediff_review.github']
 local remote_threads = function()
   return {
     github.normalize_thread(thread_node('R1', { line = 2, startLine = 2 })),
-    github.normalize_thread(outdated_node 'R2'),
+    github.normalize_thread(outdated_node('R2', { originalLine = 1 })),
     github.normalize_thread(thread_node('R3', { path = 'other.lua', line = 1 })),
   }
 end
@@ -445,8 +447,8 @@ local function at_four()
 end
 assert(vim.wait(2000, function() return #vim.api.nvim_buf_get_extmarks(right, ns, 0, -1, {}) > 0 end))
 assert(not at_four(), '解決済みの印は既定で非表示')
-local list_select, visible_count = vim.ui.select, 0
-vim.ui.select = function(items, _, cb) visible_count = #items; cb(nil) end
+local list_select, visible_count = ui.select_with_preview, 0
+ui.select_with_preview = function(items, _, cb) visible_count = #items; cb(nil) end
 core.list()
 assert(visible_count == 3, '一覧からも解決済みを除外')
 vim.api.nvim_feedkeys('gZ', 'x', false)
@@ -455,7 +457,7 @@ core.list()
 assert(visible_count == 4, '表示中は一覧にも含める')
 vim.api.nvim_feedkeys('gZ', 'x', false)
 assert(not at_four(), 'gZで再び非表示')
-vim.ui.select = list_select
+ui.select_with_preview = list_select
 remote_threads = normal_threads
 core.refresh(true)
 
@@ -473,7 +475,7 @@ resized[3]()
 assert(resize_calls == 1, '最後のリサイズだけ描画')
 vim.defer_fn, ui.render = defer_backup, ui_render
 
--- 古いスレッドが先頭、通常スレッドが2行目に出る（gpがエラーにならない）
+-- 古いスレッドは元の行(1行目)、通常スレッドが2行目に出る（gpがエラーにならない）
 vim.api.nvim_win_set_cursor(rwin, { 1, 0 })
 vim.api.nvim_feedkeys('gp', 'x', false)
 assert(vim.api.nvim_get_current_win() ~= rwin, 'gpはフロートで開く')
@@ -494,14 +496,37 @@ selected = nil
 vim.api.nvim_feedkeys(']r', 'x', false)
 assert(selected and selected.path == 'other.lua', '最後のコメントの次は別ファイルを開く: ' .. vim.inspect(selected))
 vim.api.nvim_feedkeys('[r', 'x', false)
-assert(vim.api.nvim_win_get_cursor(rwin)[1] == 1, '前のコメント(古いスレッド=先頭)へ')
+assert(vim.api.nvim_win_get_cursor(rwin)[1] == 1, '前のコメント(古いスレッド=元の1行目)へ')
 -- gC: 一覧から選ぶとその場所へ移動
 vim.api.nvim_win_set_cursor(rwin, { 4, 0 })
-local listed
-vim.ui.select = function(items, _, cb) listed = items; cb(items[1]) end
+local listed, previewed
+local select_with_preview = ui.select_with_preview
+ui.select_with_preview = function(items, opts, cb) listed, previewed = items, opts.preview(items[1]); cb(items[1]) end
 vim.api.nvim_feedkeys('gC', 'x', false)
+ui.select_with_preview = select_with_preview
 assert(#listed == 3 and listed[1].id == 'R2', '一覧はpath→行の順（古いスレッドは先頭）')
+assert(previewed[1] == 'new.lua:元1' and vim.tbl_contains(previewed, 'q'), '一覧のプレビューは場所と全文: ' .. vim.inspect(previewed))
 assert(vim.api.nvim_win_get_cursor(rwin)[1] == 1, '選択したコメントの位置へ移動')
+-- Telescopeの一覧: 選んでいる項目の全文をプレビューに出し、Enterで選ぶ。
+do
+  local long = string.rep('長い本文 ', 40)
+  local chosen
+  ui.select_with_preview({ 'a', 'b' }, {
+    prompt = '一覧', format_item = function(item) return item end,
+    preview = function(item) return { item .. ':' .. long } end,
+  }, function(item) chosen = item end)
+  local function preview_text()
+    for _, win in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+      local text = vim.api.nvim_buf_get_lines(vim.api.nvim_win_get_buf(win), 0, -1, false)[1] or ''
+      if text:find(long, 1, true) then return text, win end
+    end
+  end
+  assert(vim.wait(2000, function() return preview_text() ~= nil end), 'プレビューに全文を出す')
+  local _, preview_win = preview_text()
+  assert(vim.wo[preview_win].wrap, 'プレビューは折り返す')
+  vim.api.nvim_feedkeys(vim.keycode '<CR>', 'x', false)
+  assert(vim.wait(2000, function() return chosen ~= nil end) and (chosen == 'a' or chosen == 'b'), '選んだ項目を返す: ' .. tostring(chosen))
+end
 
 -- PR一覧からの選択: Open/Draftを番号・タイトルで表示し、選んだPRを開く。末尾は番号入力。
 local picker_state = vim.fn.tempname()
@@ -740,6 +765,16 @@ assert(#review.comments == 1, vim.inspect(review))
 local c = review.comments[1]
 assert(c.path == 'new.lua' and c.side == 'RIGHT' and c.start_line == 2 and c.line == 4 and c.start_side == 'RIGHT' and c.body == 'レビュー本文', vim.inspect(c))
 
+-- 下書きがなければ、gSで種類を選んでから送信画面を開く。
+do
+  local kinds, kind_select, kind_input = nil, vim.ui.select, ui.input
+  vim.ui.select = function(items, opts, cb) kinds = vim.tbl_map(opts.format_item, items); cb(items[2]) end
+  ui.input = function(opts) inputs[#inputs + 1] = opts end
+  submit_map.callback()
+  vim.ui.select, ui.input = kind_select, kind_input
+  assert(vim.deep_equal(kinds, { 'コメント', '承認', '変更を依頼' }), vim.inspect(kinds))
+  assert(inputs[#inputs].title:find('承認 として送信', 1, true), '選んだ種類で送信画面を開く: ' .. inputs[#inputs].title)
+end
 -- 総評画面・通信待ち中の追加/編集は、送信成功後も残す。送信失敗では全件残す。
 core.comment()
 core.comment()
@@ -787,6 +822,11 @@ do
   assert(not relocate.move(files, { path = 'a.lua', line = 4, start_line = 2 }), '範囲の中が書き換えられたら移せない')
   assert(vim.deep_equal(relocate.move(files, { path = 'old 名前.lua', line = 2 }), { path = 'new 名前.lua', line = 2 }), 'リネームを追う（日本語パス）')
   assert(vim.deep_equal(relocate.move(files, { path = 'other.lua', line = 7 }), { path = 'other.lua', line = 7 }), '差分のないファイルはそのまま')
+  -- 移せない行（古いスレッド・要確認）の表示位置: 書き換えられた行は置き換え先へ。
+  assert(relocate.near(files, 'a.lua', 3) == 4 and relocate.near(files, 'a.lua', 5) == 6, '書き換え先・ずれを追う')
+  assert(relocate.near(files, 'new 名前.lua', 2) == 2 and relocate.near(files, 'other.lua', 7) == 7, '新しい名前・差分なし')
+  assert(relocate.line({ { 2, 2, 1, 0 } }, 3, true) == 1, '純粋な削除は直前の行')
+  assert(relocate.line({ { 2, 3, 2, 1 } }, 4, true) == 2, '短くなった置き換えは末尾に収める')
   vim.fn.delete(work, 'rf')
 end
 
@@ -922,9 +962,10 @@ do
   assert(vim.api.nvim_get_current_tabpage() == tabs[2])
   -- 一覧: 全PRのコメントを開いた順に並べ、[リポジトリ名]を付ける。選ぶとそのPRのタブへ移動する。
   local group_list
-  vim.ui.select = function(items, opts, cb) group_list = { items = items, labels = vim.tbl_map(opts.format_item, items), prompt = opts.prompt }; cb(items[1]) end
+  local group_select = ui.select_with_preview
+  ui.select_with_preview = function(items, opts, cb) group_list = { items = items, labels = vim.tbl_map(opts.format_item, items), prompt = opts.prompt }; cb(items[1]) end
   core.list()
-  vim.ui.select = select_backup
+  ui.select_with_preview = group_select
   assert(group_list.prompt == '2件のPRのコメント（選択でジャンプ）' and #group_list.items == 2, vim.inspect(group_list))
   assert(group_list.labels[1]:find('[front]', 1, true) and group_list.labels[2]:find('[back] @bob', 1, true), vim.inspect(group_list.labels))
   assert(vim.api.nvim_get_current_tabpage() == tabs[1], '別PRのコメントを選ぶとそのタブへ')
@@ -1036,6 +1077,7 @@ do
   local kept, rewritten = back.drafts[1], back.drafts[2]
   assert(kept.line == 4 and kept.head_sha == 'b2' and not kept.stale, '行のずれを追って移す: ' .. vim.inspect(kept))
   assert(rewritten.stale and rewritten.line == 2 and rewritten.head_sha == 'b1', '書き換えられた行は要確認: ' .. vim.inspect(rewritten))
+  assert(rewritten.near_line == 3, '要確認の下書きは書き換え先の近い行に出す: ' .. vim.inspect(rewritten))
   core.goto_pr(1)
   assert(vim.api.nvim_get_current_tabpage() == tabs[1], 'グループ内の順番を保つ（front → back）')
   core.goto_pr(1)

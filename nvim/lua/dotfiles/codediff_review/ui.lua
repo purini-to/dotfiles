@@ -213,6 +213,44 @@ function M.preview(lines, opts)
   return close
 end
 
+-- 選んでいる項目の全文をプレビューに出す一覧（telescope-ui-selectはプレビューを付けられない）。
+-- opts: { prompt, format_item, preview = function(item) -> 行のリスト }。Telescopeがなければ vim.ui.select。
+function M.select_with_preview(items, opts, on_choice)
+  local ok, pickers = pcall(require, 'telescope.pickers')
+  if not ok then return vim.ui.select(items, opts, on_choice) end
+  local actions, state = require 'telescope.actions', require 'telescope.actions.state'
+  pickers.new({ layout_strategy = 'vertical', layout_config = { width = 0.9, height = 0.9, preview_height = 0.6, preview_cutoff = 1 } }, {
+    prompt_title = opts.prompt,
+    finder = require('telescope.finders').new_table {
+      results = items,
+      entry_maker = function(item)
+        local text = opts.format_item(item)
+        return { value = item, display = text, ordinal = text }
+      end,
+    },
+    sorter = require('telescope.config').values.generic_sorter {},
+    previewer = require('telescope.previewers').new_buffer_previewer {
+      title = 'コメント',
+      define_preview = function(self, entry)
+        local buf = self.state.bufnr
+        vim.api.nvim_buf_set_lines(buf, 0, -1, false, opts.preview(entry.value))
+        vim.b[buf].codediff_review_markdown = true -- render-markdown.nvimで描画する
+        vim.bo[buf].filetype = 'markdown'
+        vim.wo[self.state.winid].wrap = true
+      end,
+    },
+    attach_mappings = function(prompt_bufnr)
+      actions.select_default:replace(function()
+        local entry = state.get_selected_entry()
+        actions.close(prompt_bufnr)
+        -- 閉じる処理は遅延するので、元のウィンドウに戻ってから呼ぶ。
+        if entry then vim.schedule(function() on_choice(entry.value) end) end
+      end)
+      return true
+    end,
+  }):find()
+end
+
 function M.clear(bufs)
   for _, buf in pairs(bufs) do
     if vim.api.nvim_buf_is_valid(buf) then vim.api.nvim_buf_clear_namespace(buf, namespace, 0, -1) end

@@ -80,14 +80,14 @@ query($owner: String!, $name: String!, $number: Int!, $after: String) {
           id isResolved isOutdated path line startLine originalLine diffSide
           viewerCanResolve viewerCanUnresolve viewerCanReply
           resolvedBy { login }
-          comments(first: 100) { nodes { databaseId body createdAt url author { login } } }
+          comments(first: 100) { nodes { databaseId body createdAt url originalCommit { oid } author { login } } }
         }
       }
     }
   }
 }]]
 
--- GraphQLのスレッドを表示用の形にする。古い(outdated)スレッドは line が無い。
+-- GraphQLのスレッドを表示用の形にする。古い(outdated)スレッドは line が無い（original_commit の original_line から近い行を探す）。
 function M.normalize_thread(node)
   local comments = {}
   for _, c in ipairs(node.comments and node.comments.nodes or {}) do
@@ -96,9 +96,11 @@ function M.normalize_thread(node)
       user = { login = c.author and c.author.login or 'ghost' },
     }
   end
+  local first = node.comments and node.comments.nodes and node.comments.nodes[1]
   return {
     kind = 'thread', id = node.id, path = node.path, side = node.diffSide or 'RIGHT', line = node.line,
     start_line = node.startLine ~= node.line and node.startLine or nil, original_line = node.originalLine,
+    original_commit = first and first.originalCommit and first.originalCommit.oid,
     resolved = node.isResolved == true, outdated = node.isOutdated == true,
     resolved_by = node.resolvedBy and node.resolvedBy.login, can_resolve = node.viewerCanResolve == true,
     can_unresolve = node.viewerCanUnresolve == true, can_reply = node.viewerCanReply ~= false, comments = comments,

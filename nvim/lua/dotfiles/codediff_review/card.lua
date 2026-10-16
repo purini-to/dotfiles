@@ -15,10 +15,11 @@ local function define_highlights()
   for name, link in pairs(groups) do vim.api.nvim_set_hl(0, name, { link = link, default = true }) end
 end
 
--- 古い(outdated)スレッドと要確認(stale)の下書きは現在の行に載せられないので、ファイル先頭行の直下に出す。
--- (1行目の上の仮想行はNeovimが表示しない)
+-- 古い(outdated)スレッドと要確認(stale)の下書きは現在の行に載せられないので、元の行を差分で追った近い行
+-- (near_line)に出す。わからなければファイル先頭行の直下(1行目の上の仮想行はNeovimが表示しない)。
 function M.anchor(item)
   if item.line and not item.stale then return item.side, item.line end
+  if item.near_line then return item.side, item.near_line end
   return 'RIGHT', 1
 end
 
@@ -30,7 +31,7 @@ function M.items(ctx)
   end
   for _, c in ipairs(ctx.drafts) do
     if c.path == ctx.path then
-      items[#items + 1] = { kind = 'draft', side = c.side, line = c.line, start_line = c.start_line, stale = c.stale, comments = { c } }
+      items[#items + 1] = { kind = 'draft', side = c.side, line = c.line, start_line = c.start_line, stale = c.stale, near_line = c.near_line, comments = { c } }
     end
   end
   return items

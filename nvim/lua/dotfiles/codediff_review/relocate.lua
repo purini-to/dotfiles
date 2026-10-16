@@ -26,12 +26,15 @@ function M.parse(text)
   return files
 end
 
--- 旧コミットの行 line の、新コミットでの行。書き換え・削除された行なら nil。
-function M.line(hunks, line)
+-- 旧コミットの行 line の、新コミットでの行。書き換え・削除された行なら nil（near なら置き換え先の近い行）。
+function M.line(hunks, line, near)
   local shift = 0
   for _, h in ipairs(hunks) do
-    local old, old_count, new_count = h[1], h[2], h[4]
-    if old_count > 0 and line >= old and line < old + old_count then return nil end
+    local old, old_count, new, new_count = h[1], h[2], h[3], h[4]
+    if old_count > 0 and line >= old and line < old + old_count then
+      -- 純粋な削除(new_count=0)の new は削除位置の直前の行。
+      return near and math.max(1, new + math.min(line - old, math.max(new_count - 1, 0))) or nil
+    end
     -- -U0 の純粋な追加(old_count=0)は旧の old 行の直後に入る。
     if (old_count > 0 and old + old_count <= line) or (old_count == 0 and old < line) then shift = shift + new_count - old_count end
   end
@@ -60,6 +63,17 @@ function M.move(files, draft)
     if not M.line(file.hunks, l) then return nil, path end
   end
   return { path = path, line = line, start_line = start }
+end
+
+-- 移せない行（古いスレッド・要確認の下書き）の表示用に、新コミットでの近い行を返す。path は旧・新どちらの名前でもよい。
+function M.near(files, path, line)
+  local file = files[path]
+  if not file then
+    for _, f in pairs(files) do
+      if f.path == path then file = f; break end
+    end
+  end
+  return file and M.line(file.hunks, line, true) or line
 end
 
 return M
