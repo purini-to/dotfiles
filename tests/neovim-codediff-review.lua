@@ -88,7 +88,26 @@ github.submit('/cwd', 'o/r', 7, { event = 'COMMENT' }, function() end)
 assert(calls[#calls].args[7] == 'repos/o/r/pulls/7/reviews' and calls[#calls].stdin == '{"event":"COMMENT"}')
 local listed_prs
 github.pull_requests('/cwd', 'o/r', function(_, value) listed_prs = value end)
-assert(vim.deep_equal(calls[#calls].args, { 'gh', 'pr', 'list', '--repo', 'github.com/o/r', '--state', 'open', '--limit', '100', '--json', 'number,title,isDraft,author,headRefName' }), vim.inspect(calls[#calls].args))
+assert(vim.deep_equal(calls[#calls].args, { 'gh', 'pr', 'list', '--repo', 'github.com/o/r', '--state', 'open', '--limit', '100', '--json', 'number,title,isDraft,author,headRefName,reviews' }), vim.inspect(calls[#calls].args))
+-- 自分のレビュー状態: コメントは承認・変更依頼を上書きしない。却下されたらコメント扱い。未送信(PENDING)は無視。
+local function folded(states)
+  local state
+  for _, next_state in ipairs(states) do state = github.review_state(state, next_state) end
+  return state
+end
+assert(folded { 'COMMENTED' } == 'COMMENTED' and folded { 'APPROVED', 'COMMENTED' } == 'APPROVED' and folded { 'COMMENTED', 'CHANGES_REQUESTED' } == 'CHANGES_REQUESTED')
+assert(folded { 'CHANGES_REQUESTED', 'APPROVED' } == 'APPROVED' and folded { 'DISMISSED' } == 'COMMENTED' and folded { 'PENDING' } == nil)
+do
+  local json_backup = async.json
+  async.json = function(args, _, cb)
+    if args[3] == 'user' then return cb(nil, { login = 'me' }) end
+    cb(nil, { { number = 1, reviews = { { author = { login = 'me' }, state = 'APPROVED' }, { author = { login = 'bob' }, state = 'CHANGES_REQUESTED' } } }, { number = 2 } })
+  end
+  local mine
+  github.pull_requests('/cwd', 'o/r', function(_, value) mine = value end)
+  async.json = json_backup
+  assert(mine[1].my_review == 'APPROVED' and mine[2].my_review == nil and mine[1].reviews == nil, vim.inspect(mine))
+end
 
 -- GH_HOSTなしでも、検出したEnterpriseホストを全APIとPRコマンドへ引き継ぐ。
 local old_host = vim.env.GH_HOST
@@ -891,6 +910,23 @@ do
   name, pos = run('grt', pr_ctx)
   assert(name == work .. '/src/x.lua' and pos[1] == 2, 'PRのブランチに切り替えて手元で開く: ' .. name)
   assert(sh 'git rev-parse --abbrev-ref HEAD' == 'pr' and vim.deep_equal(vim.fn.readfile(bin .. '/calls'), { 'pr checkout 7 --repo o/r' }))
+  -- PRを開いたとき: LSPで切り替え済みでも、開き直すたびに gh pr checkout で最新にする。未コミットの変更があれば切り替えない。
+  local notify_backup, notified = vim.notify, {}
+  vim.notify = function(message) notified[#notified + 1] = message end
+  local function notified_with(text) return vim.wait(5000, function() return notified[#notified] and notified[#notified]:find(text, 1, true) end) end
+  local completed = 0
+  local function updated() completed = completed + 1 end
+  sh 'git checkout -q - && printf dirty >> src/x.lua'
+  review_lsp.update_branch(pr_ctx, updated)
+  assert(notified_with '未コミットの変更があるため' and completed == 1 and sh 'git rev-parse --abbrev-ref HEAD' ~= 'pr', vim.inspect(notified))
+  sh 'git checkout -q -- .'
+  review_lsp.update_branch(pr_ctx, updated)
+  assert(notified_with 'ブランチに切り替えました' and completed == 2 and sh 'git rev-parse --abbrev-ref HEAD' == 'pr', vim.inspect(notified))
+  review_lsp.update_branch(vim.tbl_extend('force', pr_ctx, { branch = 'pr' }), updated)
+  assert(notified_with 'ブランチを最新にしました' and completed == 3 and #vim.fn.readfile(bin .. '/calls') == 3, vim.inspect(notified))
+  review_lsp.update_branch({ cwd = bin }, updated)
+  assert(vim.wait(5000, function() return completed == 4 end), 'リポジトリ取得失敗でも完了を通知する')
+  vim.notify = notify_backup
   vim.env.PATH = path_env
   review_lsp.cleanup()
   vim.fn.delete(bin, 'rf')
@@ -909,7 +945,7 @@ do
   local member_patch = '@@ -1,3 +1,4 @@\n a\n b\n+c\n d'
   local heads = { ['o/front'] = 'f1', ['o/back'] = 'b1' }
   gh.repository = function(_, repo, cb) cb(nil, repo) end
-  gh.pull_request = function(_, repo, _, cb) cb(nil, { headRefOid = heads[repo], title = repo .. ' title', url = 'u' }) end
+  gh.pull_request = function(_, repo, _, cb) cb(nil, { headRefOid = heads[repo], title = repo .. ' title', url = 'https://github.com/' .. repo, headRefName = 'feat' }) end
   gh.files = function(_, repo, _, cb) cb(nil, { { filename = repo == 'o/front' and 'new.lua' or 'api.lua', patch = member_patch } }) end
   gh.threads = function(_, repo, _, cb)
     cb(nil, repo == 'o/back' and { github.normalize_thread(thread_node('B1', { path = 'api.lua', line = 3, startLine = 3 })) } or {})
@@ -923,6 +959,9 @@ do
   end
   member_store.save = function(pr) saved_prs[pr.repo] = pr; return true end
   local opened_cmds, tabs = {}, {}
+  local review_lsp = require 'dotfiles.codediff_review.lsp'
+  local update_branch, branch_updates = review_lsp.update_branch, {}
+  review_lsp.update_branch = function(ctx, done) branch_updates[#branch_updates + 1] = { ctx = ctx, done = done } end
   vim.cmd = setmetatable({}, { __call = function(_, c) opened_cmds[#opened_cmds + 1] = c end, __index = original_cmd })
   -- CodeDiffが新しいタブを作り、PRのHEADを表示したとしてCodeDiffOpenを送る。
   local lifecycle_stub = package.loaded['codediff.ui.lifecycle']
@@ -949,8 +988,15 @@ do
   }
   assert(#opened_cmds == 1 and opened_cmds[1]:find('CodeDiff pr 1 ', 1, true), '1件ずつ開く: ' .. vim.inspect(opened_cmds))
   codediff_opened('f1', 'new.lua')
+  vim.wait(50, function() return false end)
+  assert(#opened_cmds == 1, '前のPRのブランチ切り替えが済むまで、次のPRのfetchを始めない')
+  assert(branch_updates[1].ctx.number == 1 and branch_updates[1].done)
+  branch_updates[1].done()
   assert(vim.wait(1000, function() return #opened_cmds == 2 end) and opened_cmds[2]:find('CodeDiff pr 2 ', 1, true), '前のPRのタブができてから次を開く')
   codediff_opened('b1', 'api.lua')
+  assert(branch_updates[2].ctx.number == 2 and branch_updates[2].done)
+  branch_updates[2].done()
+  review_lsp.update_branch = update_branch
   vim.cmd = original_cmd
   assert(vim.wait(1000, function() return vim.api.nvim_get_current_tabpage() == tabs[1] end), '開き終わったら最初のPRのタブへ戻る')
   -- ]p / [p: グループ内のタブを循環する。
@@ -960,6 +1006,13 @@ do
   assert(vim.api.nvim_get_current_tabpage() == tabs[1], '端では循環')
   core.goto_pr(-1)
   assert(vim.api.nvim_get_current_tabpage() == tabs[2])
+  -- gy / gY: 全PRのリポジトリ名とブランチ / URLを開いた順にコピーする。
+  local setreg, copied = vim.fn.setreg, {}
+  vim.fn.setreg = function(reg, text) copied[#copied + 1] = { reg, text } end
+  core.copy 'branch'
+  core.copy 'url'
+  vim.fn.setreg = setreg
+  assert(vim.deep_equal(copied, { { '+', 'o/front feat\no/back feat' }, { '+', 'https://github.com/o/front\nhttps://github.com/o/back' } }), vim.inspect(copied))
   -- 一覧: 全PRのコメントを開いた順に並べ、[リポジトリ名]を付ける。選ぶとそのPRのタブへ移動する。
   local group_list
   local group_select = ui.select_with_preview
@@ -991,6 +1044,14 @@ do
   assert(group_requests[1].repo == 'o/front' and group_requests[1].payload.body == '共通\n\nフロント向け' and #group_requests[1].payload.comments == 1)
   assert(group_requests[2].repo == 'o/back' and group_requests[2].payload.body == '共通' and group_requests[2].payload.event == 'APPROVE')
   assert(#saved_prs['o/front'].drafts == 0, '送信したPRの下書きを消す')
+  -- まとめて承認: 承認済みのPRへ承認を重ねない。下書きがあればコメントとして送り、なければ送らない。
+  table.insert(saved_prs['o/front'].drafts, { id = 'F1b', path = 'new.lua', side = 'RIGHT', line = 3, body = '承認後の指摘', head_sha = 'f1' })
+  group_requests = {}
+  ui.input = function(_, cb) cb('') end
+  core.submit 'approve'
+  assert(vim.wait(1000, function() return #group_requests == 1 end), vim.inspect(group_requests))
+  assert(group_requests[1].repo == 'o/front' and group_requests[1].payload.event == 'COMMENT' and #group_requests[1].payload.comments == 1, vim.inspect(group_requests))
+  assert(saved_prs['o/front'].my_review == 'APPROVED', 'コメントは承認済みを上書きしない')
   -- 総評もコメントもないCOMMENTは飛ばす。途中で失敗したら残りは送らず、送れたPRの下書きだけ消す。
   table.insert(saved_prs['o/front'].drafts, { id = 'F2', path = 'new.lua', side = 'RIGHT', line = 3, body = '再指摘', head_sha = 'f1' })
   group_requests = {}

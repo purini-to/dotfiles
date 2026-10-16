@@ -13,6 +13,15 @@ local message_prompt = 'stage済み変更全体のGitコミットメッセージ
   .. '出力例:\nfix(api): 空配列のときのクラッシュを修正\n\n'
   .. '- 一覧取得で結果が空のとき items[0] を参照して落ちていたため、長さを確認する分岐を追加\n'
   .. '- 空の場合は空配列を返すテストを追加\n'
+local pr_prompt = 'GitHub PRのタイトルと概要を日本語で作る。入力はマージ先とのブランチ全体の差分。'
+  .. '1行目は約50字以内の具体的なタイトル（見出し記号・末尾の句点なし）。2行目は空行。'
+  .. '3行目以降はMarkdownの本文。`## 概要` に変更の目的を短く、`## 変更内容` に具体的な変更を箇条書きで書く。'
+  .. '目的が読み取れなければ変更内容だけを説明する。テスト実行結果は入力にないため書かない。'
+  .. '省略箇所を推測しない。タイトルと本文だけを出力。\n'
+local branch_prompt = '未コミットのGit差分から、変更全体に合うブランチ名を1つ作る。'
+  .. 'feat/fix/refactor/docs/test/chore/perf/build/ci/styleから適切な接頭辞を選び、`feat/short-description`の形式にする。'
+  .. '英小文字・数字・ハイフンを使い、全体を約60字以内にする。stage済みと未stageの差分には同じファイルが重複しうる。'
+  .. '省略箇所を推測しない。ブランチ名1行だけを出力し、説明・引用符・Markdownを付けない。\n'
 
 local function notify(text, level) vim.notify('Git: ' .. text, level or vim.log.levels.INFO) end
 
@@ -57,13 +66,15 @@ local function commit_input(patch)
   return input
 end
 
-function M.request(patch, callback)
+function M.request(patch, callback, kind)
   local job = { cancelled = false }
   function job:kill(signal)
     self.cancelled = true
     if self.active then self.active:kill(signal) end
   end
-  job.active = llm.chat({ system = message_prompt .. common, user = commit_input(patch), num_ctx = 8192, num_predict = 512, timeout = 120 }, function(result, err)
+  local prompt = kind == 'branch' and branch_prompt or kind == 'pr' and pr_prompt or message_prompt
+  job.active = llm.chat({ system = prompt .. common, user = commit_input(patch), num_ctx = 8192,
+    num_predict = kind == 'branch' and 96 or kind == 'pr' and 768 or 512, timeout = 120 }, function(result, err)
     if not job.cancelled then callback(result, err) end
   end)
   return job
@@ -78,10 +89,56 @@ local function staged(cwd, callback)
     end))
 end
 
+local function pr_diff(cwd, callback)
+  local job = { cancelled = false }
+  function job:kill(signal)
+    self.cancelled = true
+    if self.active then self.active:kill(signal) end
+  end
+  local function run(args, done, allow_missing)
+    job.active = vim.system(args, { cwd = cwd, text = true, timeout = 15000 }, vim.schedule_wrap(function(result)
+      if job.cancelled then return end
+      if result.code ~= 0 and not (allow_missing and result.code == 1) then
+        return callback(nil, vim.trim(result.stderr or '') ~= '' and vim.trim(result.stderr) or 'PR差分を取得できません')
+      end
+      done(vim.trim(result.stdout or ''))
+    end))
+  end
+  run({ 'gh', 'repo', 'view', '--json', 'url,defaultBranchRef' }, function(out)
+    local ok, repo = pcall(vim.json.decode, out)
+    if not (ok and type(repo) == 'table' and type(repo.url) == 'string' and type(repo.defaultBranchRef) == 'table') then
+      return callback(nil, 'GitHubリポジトリ・マージ先を取得できません')
+    end
+    run({ 'git', 'symbolic-ref', '--short', 'HEAD' }, function(branch)
+      run({ 'git', 'config', '--get', 'branch.' .. branch .. '.gh-merge-base' }, function(base)
+        if base == '' then base = repo.defaultBranchRef.name end
+        if type(base) ~= 'string' or base == '' then return callback(nil, 'マージ先ブランチがありません') end
+        -- ghと同じ認証でHTTPS fetch。forkやorigin以外のマージ先も、ghが選んだリポジトリを使う。
+        local authenticated = { 'git', '-c', 'credential.helper=', '-c', 'credential.helper=!gh auth git-credential' }
+        run(vim.list_extend(vim.deepcopy(authenticated), { 'ls-remote', '--exit-code', '--', repo.url, 'refs/heads/' .. base }), function(ref)
+          local revision = ref:match('^(%x+)%s')
+          if not revision then return callback(nil, 'マージ先のSHAを取得できません') end
+          -- FETCH_HEADはlazygitなど別のfetchで変わるため、先に読んだSHAを使う。
+          run(vim.list_extend(authenticated, { 'fetch', '--no-tags', '--no-write-fetch-head', '--', repo.url, revision }), function()
+            run({ 'git', '-c', 'core.quotePath=false', 'diff', '--no-ext-diff', '--no-textconv', '--no-color',
+              '--stat', '--stat-width=160', '--stat-name-width=100', '--patch', '--unified=0', revision .. '...HEAD', '--' }, function(patch)
+              if patch == '' then return callback('') end
+              callback('PR: ' .. repo.url .. ' (' .. branch .. ' → ' .. base .. ')\n' .. patch)
+            end)
+          end)
+        end)
+      end, true)
+    end)
+  end)
+  return job
+end
+
 function M.generate()
   local buf = vim.api.nvim_get_current_buf()
-  if vim.bo[buf].filetype ~= 'gitcommit' then return notify('コミット編集画面で実行してください', vim.log.levels.WARN) end
-  if jobs[buf] then return notify('生成中です。:GitCommitAICancel で中止できます') end
+  local pr = vim.b[buf].git_pr
+  if not pr and vim.bo[buf].filetype ~= 'gitcommit' then return notify('コミット・PR編集画面で実行してください', vim.log.levels.WARN) end
+  if jobs[buf] then return notify('生成中です。:' .. (pr and 'GitPRAICancel' or 'GitCommitAICancel') .. ' で中止できます') end
+  local read_diff = pr and pr_diff or staged
   local cwd, tick = vim.fn.getcwd(), vim.api.nvim_buf_get_changedtick(buf)
   local state = {}
   jobs[buf] = state
@@ -90,24 +147,26 @@ function M.generate()
     jobs[buf] = nil
     notify(err, vim.log.levels.WARN)
   end
-  notify('stage済み差分からメッセージを生成中… (' .. llm.model .. ')')
-  state.handle = staged(cwd, function(patch, err)
+  notify((pr and 'PR差分からタイトル・概要' or 'stage済み差分からメッセージ') .. 'を生成中… (' .. llm.model .. ')')
+  state.handle = read_diff(cwd, function(patch, err)
     if not active() then return end
     if not patch then return fail(err) end
-    if vim.trim(patch) == '' then return fail('stage済み変更がありません') end
+    if vim.trim(patch) == '' then return fail(pr and 'マージ先との差分がありません' or 'stage済み変更がありません') end
     state.handle = M.request(patch, function(message, request_err)
       if not active() then return end
       if not message then return fail(request_err) end
-      state.handle = staged(cwd, function(current, read_err)
+      state.handle = read_diff(cwd, function(current, read_err)
         if not active() then return end
         if not current then return fail(read_err) end
-        if current ~= patch then return fail('生成中にstage済み差分が変わりました。Ctrl-g で再生成してください') end
+        if current ~= patch then return fail('生成中に' .. (pr and 'PR差分' or 'stage済み差分') .. 'が変わりました。Ctrl-g で再生成してください') end
         if vim.api.nvim_buf_get_changedtick(buf) ~= tick then return fail('生成中に本文が編集されたため、結果は適用しません') end
         -- Preserve Git's status comments and any verbose diff after them.
         local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
         local finish = #lines
-        for index, line in ipairs(lines) do
-          if line:match('^#') then finish = index - 1; break end
+        if not pr then
+          for index, line in ipairs(lines) do
+            if line:match('^#') then finish = index - 1; break end
+          end
         end
         local proposal = vim.split(vim.trim(message), '\n', { plain = true })
         proposal[#proposal + 1] = ''
@@ -116,9 +175,19 @@ function M.generate()
           vim.api.nvim_buf_set_lines(buf, 0, finish, false, proposal)
         end)
         jobs[buf] = nil
-        notify('案を挿入しました。確認・修正して :wq でcommit、:cq で取消。u で元に戻せます')
+        notify('案を挿入しました。確認・修正して :wq で' .. (pr and 'PR作成' or 'commit') .. '、:cq で取消。u で元に戻せます')
       end)
-    end)
+    end, pr and 'pr' or nil)
+  end)
+end
+
+function M.pr_editor()
+  local buf = vim.api.nvim_get_current_buf()
+  vim.b[buf].git_pr = true
+  vim.bo[buf].filetype = 'markdown'
+  vim.keymap.set({ 'n', 'i' }, '<C-g>', M.generate, { buffer = buf, desc = 'Git: Generate PR title / body' })
+  vim.schedule(function()
+    if vim.api.nvim_buf_is_valid(buf) then vim.api.nvim_buf_call(buf, M.generate) end
   end)
 end
 
@@ -129,13 +198,44 @@ function M.cancel(buf)
   if job and job.handle then job.handle:kill(15) end
 end
 
-function M.open()
-  if vim.fn.executable 'lazygit' ~= 1 then return notify('lazygit未導入です（brew install lazygit）', vim.log.levels.ERROR) end
+local function repository_root()
   local cwd = vim.fn.getcwd()
   local path = vim.api.nvim_buf_get_name(0)
   if vim.uv.fs_stat(path) then cwd = vim.fn.isdirectory(path) == 1 and path or vim.fs.dirname(path) end
   local root = vim.system({ 'git', '-C', cwd, 'rev-parse', '--show-toplevel' }, { text = true, timeout = 5000 }):wait()
-  if root.code ~= 0 then return notify('Gitリポジトリ内で開いてください', vim.log.levels.WARN) end
+  if root.code ~= 0 then
+    notify('Gitリポジトリ内で開いてください', vim.log.levels.WARN)
+    return nil
+  end
+  return vim.trim(root.stdout)
+end
+
+function M.branch(standalone)
+  local root = repository_root()
+  if root then
+    local branch = require 'dotfiles.git_branch'
+    if standalone then vim.schedule(function() branch.create(root, true) end)
+    else branch.create(root) end
+  end
+end
+
+function M.open()
+  if vim.fn.executable 'lazygit' ~= 1 then return notify('lazygit未導入です（brew install lazygit）', vim.log.levels.ERROR) end
+  local root = repository_root()
+  if not root then return end
+  local editor = vim.fn.shellescape(vim.v.progpath)
+  local config_dir = vim.system({ 'lazygit', '--print-config-dir' }, { text = true, timeout = 5000 }):wait()
+  if config_dir.code ~= 0 then return notify('lazygitの設定場所を取得できません', vim.log.levels.ERROR) end
+  local config = vim.fn.tempname() .. '.yml'
+  vim.fn.writefile({ vim.json.encode { customCommands = {
+    { key = 'o', context = 'localBranches', command = 'gh pr create --editor', output = 'terminal',
+      description = '現在のブランチのPRを作成（AIでタイトル・概要）' },
+    { key = 'B', context = 'files,localBranches',
+      command = editor .. ' -c ' .. vim.fn.shellescape "lua require('dotfiles.git').branch(true)",
+      output = 'terminal', description = '差分からAIでブランチ名を提案して作成' },
+  } } }, config)
+  local configs = vim.env.LG_CONFIG_FILE or (vim.trim(config_dir.stdout) .. '/config.yml')
+  if not vim.env.LG_CONFIG_FILE and vim.fn.filereadable(configs) ~= 1 then configs = '' end
   vim.cmd 'tabnew'
   local buf = vim.api.nvim_get_current_buf()
   local tab = vim.api.nvim_get_current_tabpage()
@@ -145,6 +245,7 @@ function M.open()
   terminal_count = terminal_count + 1
   vim.o.ambiwidth = 'single'
   local function restore_width()
+    vim.fn.delete(config)
     terminal_count = terminal_count - 1
     if terminal_count == 0 then
       if vim.o.ambiwidth == 'single' then vim.o.ambiwidth = saved_ambiwidth end
@@ -152,10 +253,10 @@ function M.open()
     end
   end
   -- Use a child Neovim editor; no remote-wait helper or global Git config changes.
-  local editor = vim.fn.shellescape(vim.v.progpath)
-  local channel = vim.fn.jobstart({ 'lazygit' }, {
-    term = true, cwd = vim.trim(root.stdout),
-    env = { GIT_EDITOR = editor, EDITOR = 'nvim', VISUAL = 'nvim' },
+  local channel = vim.fn.jobstart({ 'lazygit', '--use-config-file', (configs ~= '' and configs .. ',' or '') .. config }, {
+    term = true, cwd = root,
+    env = { GIT_EDITOR = editor, EDITOR = 'nvim', VISUAL = 'nvim',
+      GH_EDITOR = editor .. ' -c ' .. vim.fn.shellescape "lua require('dotfiles.git').pr_editor()" },
     on_exit = function(_, code)
       vim.schedule(function()
         restore_width()
@@ -185,7 +286,15 @@ function M.setup()
   vim.api.nvim_create_user_command('LazyGit', M.open, {})
   vim.api.nvim_create_user_command('GitCommitAI', M.generate, {})
   vim.api.nvim_create_user_command('GitCommitAICancel', function() M.cancel() end, {})
-  vim.keymap.set('n', '<leader>gg', M.open, { desc = 'Git: Lazygit (stage / commit / push)' })
+  vim.api.nvim_create_user_command('GitPRAI', function()
+    if not vim.b.git_pr then return notify('lazygitのブランチ一覧で o を押してPR編集画面を開いてください', vim.log.levels.WARN) end
+    M.generate()
+  end, {})
+  vim.api.nvim_create_user_command('GitPRAICancel', function() M.cancel() end, {})
+  vim.api.nvim_create_user_command('GitBranchAI', function() M.branch() end, {})
+  vim.api.nvim_create_user_command('GitBranchAICancel', function() require('dotfiles.git_branch').cancel() end, {})
+  vim.keymap.set('n', '<leader>gb', M.branch, { desc = 'Git: Create branch with AI' })
+  vim.keymap.set('n', '<leader>gg', M.open, { desc = 'Git: Lazygit (stage / commit / push / PR)' })
   local group = vim.api.nvim_create_augroup('git-commit-ai', { clear = true })
   vim.api.nvim_create_autocmd('FileType', {
     group = group, pattern = 'gitcommit',
@@ -194,6 +303,7 @@ function M.setup()
     end,
   })
   vim.api.nvim_create_autocmd('BufWipeout', { group = group, callback = function(event) M.cancel(event.buf) end })
+  vim.api.nvim_create_autocmd('VimLeavePre', { group = group, callback = function() require('dotfiles.git_branch').cancel() end })
 end
 
 return M

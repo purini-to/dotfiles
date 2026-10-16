@@ -53,8 +53,43 @@ function M.repository(cwd, explicit_repo, callback)
   end)
 end
 
+-- 自分のレビュー状態（APPROVED / CHANGES_REQUESTED / COMMENTED / nil）に次のレビューを重ねる。
+-- コメントは承認・変更依頼を上書きしない（GitHubのReviewers表示と同じ）。却下されたらコメントだけと同じ扱い。
+function M.review_state(state, next_state)
+  if next_state == 'DISMISSED' then return 'COMMENTED' end
+  if next_state == 'COMMENTED' then return state or next_state end
+  if next_state == 'APPROVED' or next_state == 'CHANGES_REQUESTED' then return next_state end
+  return state -- PENDING（未送信）
+end
+
+local viewers = {} -- host -> ghでログイン中のユーザー名
+
+-- PR（一覧なら各PR）の reviews から自分のレビュー状態を my_review に入れる。
+-- ponytail: ghが返すのは古い順に100件まで。それより多いPRでは最新の承認を見落としうる。必要ならGraphQLで後ろからページ送りする。
+local function with_my_review(cwd, repo, args, callback)
+  local host = split_repo(repo)
+  local function run()
+    gh(args, cwd, function(err, value)
+      if err then return callback(err) end
+      for _, pr in ipairs(type(value) == 'table' and (vim.islist(value) and value or { value }) or {}) do
+        for _, review in ipairs(type(pr.reviews) == 'table' and pr.reviews or {}) do
+          if viewers[host] and type(review.author) == 'table' and review.author.login == viewers[host] then pr.my_review = M.review_state(pr.my_review, review.state) end
+        end
+        pr.reviews = nil
+      end
+      callback(nil, value)
+    end)
+  end
+  if viewers[host] then return run() end
+  -- 取得できなければ状態を出さないだけ（次の呼び出しで再取得する）。
+  api(repo, { 'api', 'user' }, cwd, function(err, user)
+    if not err and type(user) == 'table' and type(user.login) == 'string' then viewers[host] = user.login end
+    run()
+  end)
+end
+
 function M.pull_request(cwd, repo, number, callback)
-  gh({ 'pr', 'view', tostring(number), '--repo', qualified_repo(repo), '--json', 'number,title,url,headRefOid' }, cwd, callback)
+  with_my_review(cwd, repo, { 'pr', 'view', tostring(number), '--repo', qualified_repo(repo), '--json', 'number,title,url,headRefOid,headRefName,reviews' }, callback)
 end
 
 function M.files(cwd, repo, number, callback)
@@ -67,7 +102,7 @@ end
 
 -- レビュー対象の選択肢: Open(Draft含む)のPR。
 function M.pull_requests(cwd, repo, callback)
-  gh({ 'pr', 'list', '--repo', qualified_repo(repo), '--state', 'open', '--limit', '100', '--json', 'number,title,isDraft,author,headRefName' }, cwd, callback)
+  with_my_review(cwd, repo, { 'pr', 'list', '--repo', qualified_repo(repo), '--state', 'open', '--limit', '100', '--json', 'number,title,isDraft,author,headRefName,reviews' }, callback)
 end
 
 local threads_query = [[

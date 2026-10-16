@@ -7,6 +7,12 @@ local active
 
 local function clean(text) return tostring(text or ''):gsub('%c', ' ') end
 
+-- 自分のレビュー状態のアイコン＋空白（レビューしていなければ空）。
+function M.review_mark(state)
+  local icon = state and config.options.icons[state:lower()]
+  return icon and icon .. ' ' or ''
+end
+
 function M.make_indexed(items)
   local entries, widths = {}, { 0, 0, 0, 0 }
   for index, item in ipairs(items) do
@@ -22,7 +28,7 @@ function M.make_indexed(items)
         '#' .. pr.number,
         clean(pr.headRefName),
         '@' .. clean(pr.author and pr.author.login or 'ghost'),
-        (pr.isDraft and '[Draft] ' or '') .. clean(pr.title),
+        M.review_mark(pr.my_review) .. (pr.isDraft and '[Draft] ' or '') .. clean(pr.title),
       }
       for i = 1, 4 do widths[i] = math.max(widths[i], vim.fn.strdisplaywidth(fields[i])) end
     end
