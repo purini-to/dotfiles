@@ -57,6 +57,7 @@ Leaderはスペース。Catppuccin Macchiato、2スペース、`jj`/`っj`、表
 
 - `<Space>gd`: CodeDiffで変更ファイルを一覧・比較。外部変更にも追従する
 - `<Space>gg` / `:LazyGit`: lazygitを専用タブで開き、stage・commit・pushする
+- `<Space>gb` / `:GitBranchAI`: 現在のGit差分からAIでブランチ名を提案し、確認して作成・切替
 - `<Space>at`: CodeDiffのローカルAI要約を有効 / 無効にする
 - `<Space>aS`: CodeDiffの現在ファイル要約を再生成する（大文字S）
 - `:CodeDiff --staged`: ステージ済み変更を比較
@@ -85,13 +86,23 @@ LSPのdocumentSymbolを優先し、取得できなければTree-sitter、両方�
 
 実装は`nvim/lua/herdr.lua`（送信先）と`nvim/lua/herdr/context.lua`（文脈）。既存の`link.sh`のLuaディレクトリリンクと`init.sh`のHerdr導入で利用できる。
 
-### コミット・push（lazygit）
+### ブランチ・コミット・push・PR作成（lazygit）
+
+`<Space>gb`（または`:GitBranchAI`）で現在ファイルのGitリポジトリの未コミット変更から、共通のOllamaモデルが`feat/short-description`などの英語ブランチ名を提案する。lazygitのファイル一覧・ブランチ一覧では`B`（大文字）から利用できる。stage済み・未stageの差分と、ignored以外の未追跡ファイルを対象にする（初回commit前も利用可）。入力欄で名前を確認・修正し、`Enter`で作成して切替、`Esc`で取消。Gitで名前を検査し、同名の既存ブランチは上書きしない。stage状態・作業内容は保持する。生成中に差分・元ブランチ・HEADが変わった場合は作成を止める。`:GitBranchAICancel`で生成を中止できる。lazygitでは子Neovimを使い、作成・取消後はlazygitに戻る。生成失敗時は`:GitBranchAI`で再試行、`:q`で戻る。
+
+ブランチ名の生成はコミットAIと同じ差分抜粋（最大6000バイト・生成物の詳細は省略）を再利用し、推論は1回、出力上限は96トークン。変更がなければ推論しない。大きな差分では命名の根拠も一部に限られるため、提案を確認して必要なら修正する。
 
 `<Space>gg`で現在ファイルのリポジトリ（ファイルがなければ作業ディレクトリ）を開く。ファイル一覧で`Space`でstage切替、`C`（大文字）でNeovimのコミット編集画面を開く。`Ctrl-g`（入力・ノーマル両モード）または`:GitCommitAI`でstage済み差分からConventional Commits形式（日本語）の件名と箇条書き本文を生成する。確認・修正して`:wq`でcommit、`:cq`で取消。lazygitへ戻って`P`（大文字）でpush、`q`で閉じる。通常の`c`はlazygit内の手入力用。
 
 生成には共通のローカルOllama設定を使い、`git diff --cached`の変更一覧と差分抜粋だけを送る。部分stageではstageされた内容だけが対象で、unstaged・未追跡の内容は送らない。未変更の周辺行は除き、入力は最大6000バイト（変更一覧は最大1500バイト）、差分は各ファイル先頭から均等配分する。主要なlockfile、`dist/`・`build/`・`generated/`配下、minify済みJS/CSS・ソースマップは詳細を省く。省略は入力に明示し、推論は常に1回（コンテキスト8192、出力上限512トークン）。大きな変更の細部は拾えないため、必要ならcommitを分ける。バイナリの内容は送らず、変更情報だけを渡す。秘密値を含む差分もローカルへ送るため、生成結果は必ず確認する。生成中に本文やstage済み差分が変わった場合は適用しない。`:GitCommitAICancel`で中止、適用後は`u`で戻せる。自動commit・自動pushはしない。CodeDiff・PRレビューの生成設定は変更しない。
 
-lazygitはNeovim標準ターミナルで起動し、コミット編集時には同じ設定の子Neovimを起動する。Git editorはそのプロセスだけ上書きし、既存のグローバルGit設定は変更しない。追加プラグイン・lazygit設定ファイルは不要（`link.sh`の既存Luaリンクで有効になる）。
+push後に`3`でブランチ一覧へ移動し、`o`でチェックアウト中のブランチのPRを作成する（選択行のブランチではない）。`gh`と`gh auth login`が必要。`gh pr create --editor`が子Neovimを開き、共通のOllamaモデルでタイトル・概要を自動生成する。1行目がタイトル、空行の後がMarkdown本文。`Ctrl-g`（または`:GitPRAI`）で再生成、確認・修正して`:wq`でGitHubへ送信、`:cq`で取消。適用後は`u`で戻せる。`:GitPRAICancel`で生成を中止する。生成に失敗しても手入力で作成できる。
+
+PR作成には`--editor`対応版の`gh`が必要。`gh pr create --help`に`--editor`がなければ、`brew upgrade gh`で更新する。
+
+PR生成は`gh`が選ぶGitHubリポジトリの既定ブランチ（`branch.<現在のブランチ>.gh-merge-base`があればそれ）をfetchし、分岐点からHEADまでの差分全体を使う。複数コミットを含め、stage済み・unstaged・未追跡の変更は含めない。入力の抜粋・生成物の省略はコミットAIと共通（最大6000バイト）、出力上限は768トークン。差分にない目的やテスト結果は書かない。生成中にPR差分や本文が変わった場合は適用しない。大きな変更では細部を拾えないため、生成結果を確認・追記する。
+
+lazygitはNeovim標準ターミナルで起動し、コミット・PR編集時には同じ設定の子Neovimを起動する。Git editor・GitHub editorはそのプロセスだけ上書きする。lazygitの既存設定（`LG_CONFIG_FILE`があればその設定）に、一時ファイルのPR作成キーを重ね、終了時に一時ファイルを消す。追加プラグイン・設定ファイルのリンクは不要（`link.sh`の既存Luaリンクで有効になる）。
 lazygitの罫線・文字の描画崩れを防ぐため、起動中は`ambiwidth=single`にし、最後のlazygit終了時に元へ戻す。この設定はNeovim全体に作用するため、起動中は他のタブにも適用される。
 
 CodeDiffは初回利用時と更新後にGitHub Releasesから差分計算用ネイティブライブラリを取得する。
@@ -100,13 +111,13 @@ CodeDiffは初回利用時と更新後にGitHub Releasesから差分計算用ネ
 
 CodeDiffはOllamaで現在ファイルのDiffを日本語要約する。モデルは共通設定（`nvim/lua/dotfiles/local_llm.lua`、既定`gemma4:e4b-it-q4_K_M`）で、PRレビューの入力補佐と共有する。`<Space>am`（または`:LocalLLMModel [名前]`）でインストール済みモデルから切り替え、選択は`stdpath('state')/local-llm.json`に保存される。モデル名補完は非同期取得した一覧を使い、通信を待たない。初回は取得後に再度補完する。切り替えると要約のキャッシュも別扱いになる。Ollamaは任意依存（`brew install ollama`）、モデル取得は`ollama pull gemma4:e4b-it-q4_K_M`。接続先は`127.0.0.1`のみ。推論はOff（`think=false`）。要約はメモリ内に最大100件保持し、次の3ファイルまで1件ずつ先読みする。長いDiffは分割要約して全体を統合するため、生成に時間がかかる。未追跡ファイルも新規追加として内容・役割を説明する。競合は対象外。秘密値を含むDiffもローカルOllamaへ送るため、応答に秘密値を引用しないよう指示するが、完全な保証はない。
 
-GitHub PRレビュー（`nvim/lua/dotfiles/codediff_review/`）は`gh`（`gh auth login`済み）が必要。PRのブランチはチェックアウト不要で、リポジトリ内で実行する。`<Space>gp`はOpen（Draft含む）のPRを一覧し、選ぶと開く（個別リポジトリの一覧から番号入力も可。取得に失敗したときも番号入力）。インライン・左右分割のどちらでも使え、`t`で切り替えても描き直される。
-PR選択パネルはウィンドウ幅の95%を使う（通常の選択画面は最大80列のまま）。Telescopeでリポジトリ名 / PR番号 / ブランチ / author / タイトルの5列を揃え、日本語も表示セル幅で計算する。列幅はパネル幅に追従し、長い値は省略する。検索には省略前の全文を使い、選択先のPR情報も変更しない。Draftはタイトルの先頭に表示する。
+GitHub PRレビュー（`nvim/lua/dotfiles/codediff_review/`）は`gh`（`gh auth login`済み）が必要。リポジトリ内で実行する。PRを開くと（開き直し・`reload`のたびに）、手元に未コミットの変更がなければ`gh pr checkout`で手元をPRのブランチに切り替えて最新にする（既にあるブランチはfetchしてfast-forward。確認なし。元のブランチ名を通知するので`git switch -`で戻せる）。未コミットの変更があれば切り替えずに通知する。差分の表示はCodeDiffが取得したPRのコミットを使うので、切り替えに失敗してもレビューはできる。`<Space>gp`はOpen（Draft含む）のPRを一覧し、選ぶと開く（個別リポジトリの一覧から番号入力も可。取得に失敗したときも番号入力）。インライン・左右分割のどちらでも使え、`t`で切り替えても描き直される。
+PR選択パネルはウィンドウ幅の95%を使う（通常の選択画面は最大80列のまま）。Telescopeでリポジトリ名 / PR番号 / ブランチ / author / タイトルの5列を揃え、日本語も表示セル幅で計算する。自分のレビュー状態をタイトルの前にアイコンで示す（`✔`承認済み / `✘`変更を依頼済み / `◆`コメント済み。後からコメントしても承認・変更依頼のまま。却下されたレビューはコメント済み扱い）。`gh api user`のユーザーで判定し、`]p`の通知と`:CodeDiffReview status`にも出す。アイコンは`setup { icons = { approved = ..., changes_requested = ..., commented = ... } }`で変更できる。列幅はパネル幅に追従し、長い値は省略する。検索には省略前の全文を使い、選択先のPR情報も変更しない。Draftはタイトルの先頭に表示する。
 現在ファイルのリポジトリ（見つからなければ作業ディレクトリ）の配下に別のリポジトリがあれば、先に対象リポジトリを名前（ディレクトリ名のみ）で選ぶ。submoduleでなくても、深い階層の通常のGitリポジトリを検出する。`.git`内部とシンボリックリンク先は探索しない。子がなければ従来どおり直接PR一覧を開く。番号入力に切り替えても選択したリポジトリを使う。
 リポジトリ選択 / 一括PR一覧の末尾の「表示切替」、または`:CodeDiffReview pick-toggle`で、リポジトリ別 / 全リポジトリ一括を切り替える。一括ではPRと操作項目だけを表示する（番号入力はリポジトリ別表示のみ）。一部の取得が失敗しても他のPRは表示する。PR一覧の「並び順」、または`:CodeDiffReview pick-sort`でブランチ名・PRタイトル・PR番号（新しい順）・リポジトリ名を選ぶ。既定はブランチ名順で、一括ではリポジトリを横断して並べる。一覧内で並び替えると取得済みのPRを再利用し、GitHubへの再取得はしない。コマンドでの変更は次の`Space gp`から適用する。
 表示モードと並び順は`stdpath('state')/codediff-review/picker.json`に保存し、Neovim終了後も復元する。初回の既定値は`require('dotfiles.codediff_review').setup { pick_all = false, pick_sort = 'branch' }`で指定できる（`pick_sort`は`branch` / `title` / `number` / `repo`）。保存済みの選択を設定値より優先する。既定値へ戻すにはこの保存ファイルだけを削除する（レビュー下書きは残る）。
 探索は200エントリずつ分割して入力・描画を処理し、一括取得は最大4リポジトリ並列。再起動したPR選択・表示切替・`:CodeDiffReview close`は古い探索と取得結果を無効化する（実行済みの`gh`は終了を待ち、古い結果から追加取得や一覧表示はしない）。探索結果はキャッシュせず、追加・削除した子リポジトリを次回の選択に反映する。
-**複数PRをまとめてレビュー**: PR一覧で`Tab`を押して印を付けたPRを、`Enter`でまとめて開く（印がなければ`Enter`の1件だけ。telescope-ui-selectは1件しか返さないため、表示に使ったpickerから印を読む）。選んだPRと同じブランチ名（`headRefName`）のOpen PRが他のリポジトリにあれば、まとめて開くか確認する（リポジトリ別表示では、選んだ後に他のリポジトリのPRを取得して探す）。PRごとに通常どおり`:CodeDiff pr`のタブを1件ずつ開き（前のタブができてから次を開く）、1つのグループにまとめる。開き終わったら最初のPRのタブへ戻る。途中で失敗したら残りは開かない。`]p` / `[p`（`:CodeDiffReview next-pr` / `prev-pr`）でグループ内のタブを循環する。`gC` / `]r` / `[r`は全PRのコメントを開いた順→パス→行で並べ、選ぶとそのPRのタブへ移動する。`:CodeDiffReview status`は全PRの状況を表示する（`▶`が今のタブ）。`:CodeDiffReview submit`は全PRをまとめて送る。総評欄には各PRの見出し（`## owner/repo#番号`）が入っており、その下がそのPRの総評、最初の見出しより前は全PR共通。まず全PRのHEADを確認し、1件でも変わっていれば何も送らない。その後1件ずつ送り、失敗したらそこで止めて送信済み / 未送信を表示する（送信済みのPRの下書きだけ消す）。次の送信では未送信のPRだけを対象にする。見出しが欠けている・重複しているときは、別のPRへ総評を送らないよう何も送らずに入力画面へ戻す（入力した本文は残る）。古い下書きなどで送れないPRは除外して通知し、他のPRは送る。総評もコメントもないCOMMENT / REQUEST_CHANGESのPRは送らずに通知する（APPROVEは送る）。総評のAI補完に渡す内容は全PR分で、長いと後半のPRが切り捨てられる。`:CodeDiffReview close`は、開いている途中のPRがあれば先にそれを中止する。タブを閉じたPRはグループから外れる。
+**複数PRをまとめてレビュー**: PR一覧で`Tab`を押して印を付けたPRを、`Enter`でまとめて開く（印がなければ`Enter`の1件だけ。telescope-ui-selectは1件しか返さないため、表示に使ったpickerから印を読む）。選んだPRと同じブランチ名（`headRefName`）のOpen PRが他のリポジトリにあれば、まとめて開くか確認する（リポジトリ別表示では、選んだ後に他のリポジトリのPRを取得して探す）。PRごとに通常どおり`:CodeDiff pr`のタブを1件ずつ開き（前のタブができてから次を開く）、1つのグループにまとめる。開き終わったら最初のPRのタブへ戻る。途中で失敗したら残りは開かない。`]p` / `[p`（`:CodeDiffReview next-pr` / `prev-pr`）でグループ内のタブを循環する。`gC` / `]r` / `[r`は全PRのコメントを開いた順→パス→行で並べ、選ぶとそのPRのタブへ移動する。`:CodeDiffReview status`は全PRの状況を表示する（`▶`が今のタブ）。`gy` / `gY`（`:CodeDiffReview copy-branch` / `copy-url`）は全PRのリポジトリ名とブランチ（`owner/repo branch`） / PRのURLを、開いた順に1行ずつクリップボード（`+`レジスタ）へコピーする（1件だけならそのPR）。`:CodeDiffReview submit`は全PRをまとめて送る。まとめて承認するときは、自分が承認済みのPRへ承認を重ねない（下書きがあればコメントとして送り、なければ送らない。送らないPRは通知する）。総評欄には各PRの見出し（`## owner/repo#番号`）が入っており、その下がそのPRの総評、最初の見出しより前は全PR共通。まず全PRのHEADを確認し、1件でも変わっていれば何も送らない。その後1件ずつ送り、失敗したらそこで止めて送信済み / 未送信を表示する（送信済みのPRの下書きだけ消す）。次の送信では未送信のPRだけを対象にする。見出しが欠けている・重複しているときは、別のPRへ総評を送らないよう何も送らずに入力画面へ戻す（入力した本文は残る）。古い下書きなどで送れないPRは除外して通知し、他のPRは送る。総評もコメントもないCOMMENT / REQUEST_CHANGESのPRは送らずに通知する（APPROVEは送る）。総評のAI補完に渡す内容は全PR分で、長いと後半のPRが切り捨てられる。`:CodeDiffReview close`は、開いている途中のPRがあれば先にそれを中止する。タブを閉じたPRはグループから外れる。
 **コメントを書く**: 差分ペインで`c`（選択モードは範囲）→`Ctrl-s`で下書き保存。下書きは`stdpath('state')/codediff-review/`に自動保存され、Neovimを閉じても残る。`:CodeDiffReview submit [comment|approve|request_changes]`で総評入力の後、総評と全コメントを並べた確認画面を表示し、`Enter`（または`Ctrl-s`）で1回のレビューとして送信、`q`で取消。キーマップ（`gS`）は下書きがあればコメントとして、なければ種類（コメント / 承認 / 変更を依頼）を選んでから送信画面を開く。PR差分に含まれる行にだけコメントできる。保存後は差分ペインのカーソル位置へ戻るので、続けて次の行にコメントできる。下書きは作成時のHEADとbase（merge-base）を記録する。PRのHEADが動いた後にPRを開く（Neovimの再起動後も含む）か`:CodeDiffReview reload`で再読み込みすると、前のHEADからの差分（`git diff -U0 -M`）で行のずれを追って下書きを新しいHEADへ移す。書き換え・削除された行（範囲の途中を含む）や、前のコミットが手元にない場合は移さず「要確認」にして、元の行を差分で追った近い行（書き換えられた行は置き換え先）にカードを出す。要確認の下書きは送信に含めず、`gM`でカーソル行（選択モードは範囲）へ移すか`gd`で削除する。送信時に要確認があれば「除いて送信 / キャンセル」を選ぶ。送信直前にHEADが更新されていたら何も送らず、下書きを残して再読み込みするか確認する。`:CodeDiffReview since`で前のHEADから今のHEADまでの変更を別タブで開ける。インラインの削除行は仮想行でカーソルを置けないため、直下の変更後の行（純粋な削除は次の行）で`gD`を押して選ぶ（1行ずつ。範囲コメントは左右分割で）。
 **コメントを読む**: GitHubのレビュー画面のように、対象行の直下にカードで表示する（スレッド単位、返信つき）。背景付きヘッダーに投稿者と状態、次の行に日時・対象行を表示し、本文・返信・操作欄を分ける。長い投稿者名は省略して状態を優先する。本文はMarkdownとして描画する（見出し・箇条書き・チェックボックス・引用・罫線、`code`・**太字**・*斜体*・~~取消~~・リンク・URL・@メンション、コードブロックはtree-sitterで色付け、```suggestion は「提案」表示）。表とHTMLは未対応で、そのまま表示する。状態は未解決・解決済み・古い（Outdated）で示す。レビューUIの記号はNerd Font設定に依存しない通常のUnicode（○ ✔ △ ↳ ● ◆）を使い、`ambiwidth`に合わせて枠幅を計算する。解決済みは既定で非表示。`gZ`（または`:CodeDiffReview resolved`）で表示 / 非表示を切り替え、表示時は全文カードを出す。一覧・次/前の移動・全文プレビューにも同じフィルターを適用する。既定は`setup { show_resolved = true }`で変更できる。古いスレッドは現在の行に載せられないため、コメント時のコミットから今のHEADへの差分で元の行を追い、近い行（書き換えられた行は置き換え先）に出す。コミットが手元にないときは元の行番号のまま、変更前（LEFT）は元の行番号のまま出す。日時はローカルのタイムゾーンで表示する（書式は`date_format`）。左右分割では反対側の対応行に同じ高さの空行を入れ、行揃えを保つ。`gz`でカード表示 / 印と冒頭1行だけに切り替える（既定は`setup { expanded = ... }`）。アイコンは`setup { icons = { unresolved = ..., resolved = ..., outdated = ..., reply = ..., draft = ..., comment = ... } }`で個別に差し替えられる（端末のセルからはみ出さないものを使う）。`gp`でカーソル位置の全文を表示。
 **LSPを使う**: PRの差分はCodeDiffの仮想バッファ（`codediff://`）で、CodeDiffがLSPを付けないようにしている。差分ペインで`grd` / `grr` / `gri` / `grt` / `grD` / `gO` / `gW` / `K`を押すと、同じファイル・同じ位置を実ファイルとして別タブで開き、LSPが付いてから同じキーを実行する（LSPのキーマップはそのタブのもの）。手元の作業ツリーのファイルがPRのHEAD（左側はbase）と同じ内容なら手元を開く。右側で違えば、手元に未コミットの変更がなければ`gh pr checkout`で手元をPRのブランチに切り替えて開く（確認なし。元のブランチ名を通知するので`git switch -`で戻せる。切り替えはPRごとに1回だけ試す）。左側の場合や、未コミットの変更がある・切り替えに失敗した・PRが更新されて内容が合わないときは、そのコミットを`git worktree add --detach`で`stdpath('cache')/codediff-review/worktrees/`に切り出して開く。worktreeには`node_modules`などの依存がないので、外部パッケージへのジャンプは失敗することがある。作ったworktreeはNeovimの終了時に消す。強制終了などで残ったものは、次にNeovimを起動したときに消す（ほかに起動中のNeovimが使っているものは消さない）。15秒以内にLSPが付かなければ通知する。対象のキーは`setup { lsp_keys = { ... } }`で変更でき、`{}`で無効になる。
@@ -169,6 +180,7 @@ AI設定のチェック（Ollamaサーバー不要）:
 nvim --headless '+lua local ok, err = pcall(dofile, "tests/neovim-codediff-ai.lua"); if not ok then print(err); vim.cmd("cquit 1") end' +qa
 nvim --headless '+lua local ok, err = pcall(dofile, "tests/neovim-codediff-prefetch.lua"); if not ok then print(err); vim.cmd("cquit 1") end' +qa
 nvim --headless -u NONE -l tests/neovim-git.lua
+nvim --headless -u NONE -l tests/neovim-git-branch.lua
 ```
 
 プラグイン公式: [CodeDiff](https://github.com/esmuellert/codediff.nvim)・[Trouble](https://github.com/folke/trouble.nvim)・[Oil](https://github.com/stevearc/oil.nvim)・[Neo-tree](https://github.com/nvim-neo-tree/neo-tree.nvim)

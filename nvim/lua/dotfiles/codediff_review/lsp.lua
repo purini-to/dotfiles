@@ -1,5 +1,6 @@
 -- PRの差分はCodeDiffの仮想バッファ（codediff://）で、LSPが付かない（CodeDiffが意図して外している）。
 -- grd / gri などを押したら、同じファイル・同じ位置を実ファイルとして別タブで開き、LSPが付いてから同じキーを実行する。
+-- PRを開いたときも、手元をPRのブランチに切り替えて最新にする（update_branch）。
 -- 手元の作業ツリーがPR（左側はbase）と同じ内容ならそれを開く。右側で違えば、未コミットの変更がなければ
 -- 手元を gh pr checkout でPRのブランチに切り替えて開く。切り替えられなければそのコミットを切り出したgit worktreeで開く。
 -- ponytail: worktreeには node_modules などの依存がないので、外部パッケージへのジャンプは失敗しうる。
@@ -18,12 +19,13 @@ end
 
 local tried = {} -- root#number -> true。gh pr checkout は1PRにつき1回だけ試す
 
--- 未コミットの変更がなければ、手元をPRのブランチに切り替える。callback(切り替えたか)。
+-- 未コミットの変更がなければ、手元をPRのブランチに切り替える（gh pr checkout はfetchしてfast-forwardする）。
+-- callback(切り替えたか, 未コミットの変更があったか)。
 local function switch(root, pr, callback)
   local key = root .. '#' .. pr.number
   if tried[key] then return callback(false) end
   git({ '-C', root, 'status', '--porcelain', '--untracked-files=no' }, function(code, out)
-    if code ~= 0 or out ~= '' then return callback(false) end
+    if code ~= 0 or out ~= '' then return callback(false, code == 0) end
     tried[key] = true
     git({ '-C', root, 'rev-parse', '--abbrev-ref', 'HEAD' }, function(_, before)
       vim.system({ 'gh', 'pr', 'checkout', tostring(pr.number), '--repo', pr.repo }, { cwd = root, text = true }, vim.schedule_wrap(function(result)
@@ -31,7 +33,11 @@ local function switch(root, pr, callback)
           notify('PRのブランチに切り替えられません: ' .. vim.trim(result.stderr or ''), vim.log.levels.WARN)
           return callback(false)
         end
-        notify(string.format('%s をPR #%d のブランチに切り替えました（元: %s。戻すには git switch -）', vim.fs.basename(root), pr.number, before))
+        if before == pr.branch then
+          notify(string.format('%s のPR #%d のブランチを最新にしました', vim.fs.basename(root), pr.number))
+        else
+          notify(string.format('%s をPR #%d のブランチに切り替えました（元: %s。戻すには git switch -）', vim.fs.basename(root), pr.number, before))
+        end
         callback(true)
       end))
     end)
@@ -109,6 +115,19 @@ function M.run(ctx, key)
       vim.api.nvim_win_set_cursor(win, { math.min(pos.line, vim.api.nvim_buf_line_count(buf)), col })
       if dir ~= root then notify('PRの内容を一時的なworktreeで開きました（依存パッケージへのジャンプは失敗することがあります）') end
       run_when_attached(buf, win, key)
+    end)
+  end)
+end
+
+-- PRを開いたとき、手元をPRのブランチに切り替えて最新にする（開き直すたびに試す）。
+function M.update_branch(ctx, done)
+  done = done or function() end
+  git({ '-C', ctx.cwd, 'rev-parse', '--show-toplevel' }, function(code, root)
+    if code ~= 0 then return done() end
+    tried[root .. '#' .. ctx.number] = nil
+    switch(root, ctx, function(_, dirty)
+      if dirty then notify(vim.fs.basename(root) .. ' に未コミットの変更があるため、PRのブランチに切り替えていません', vim.log.levels.WARN) end
+      done()
     end)
   end)
 end

@@ -21,7 +21,7 @@ brew install eza
 brew install bat
 brew install zoxide
 brew install hub
-brew install gh # CodeDiffのPRレビュー（:CodeDiffReview）に必要。gh auth loginも実行
+brew install gh # lazygitのPR作成・CodeDiffのPRレビューに必要。gh auth loginも実行
 brew install gibo
 brew install jq
 brew install herdr

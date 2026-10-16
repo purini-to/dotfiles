@@ -172,11 +172,12 @@ assert(result.code == 0, result.stderr)
 do
   local display = require 'dotfiles.codediff_review.picker_display'
   local item = { repo = 'owner/日本語repo', pr = { number = 1234, headRefName = 'feature/long-branch', author = { login = 'amy' }, title = '長いタイトル\n検索対象末尾', isDraft = true } }
-  local entries, widths = display.make_indexed { item, { number = 7, repo = 'owner/beta', title = '短い' }, { sort = true }, { toggle = true }, { manual = true } }
+  local entries, widths = display.make_indexed { item, { number = 7, repo = 'owner/beta', title = '短い', my_review = 'APPROVED' }, { sort = true }, { toggle = true }, { manual = true } }
   assert(entries[1].text == item and entries[1].fields[1] == '日本語repo' and entries[1].fields[2] == '#1234')
   assert(entries[1].fields[5] == '[Draft] 長いタイトル 検索対象末尾')
   assert(display.make_ordinal(entries[1]):find('feature/long-branch', 1, true) and display.make_ordinal(entries[1]):find('検索対象末尾', 1, true))
   assert(widths[1] == vim.fn.strdisplaywidth('日本語repo') and widths[2] == 5)
+  assert(entries[2].fields[5] == '✔ 短い', '自分のレビュー状態をタイトルの前に出す')
   assert(entries[2].fields[4] == '@ghost' and entries[3].label and entries[4].label and entries[5].label == '番号を入力…')
 end
 

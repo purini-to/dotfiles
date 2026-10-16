@@ -13,6 +13,7 @@ local usage = table.concat({
   ':CodeDiffReview reply | resolve | resolved | next | prev | next-pr | prev-pr',
   ':CodeDiffReview submit [comment|approve|request_changes]',
   ':CodeDiffReview reload   下書きを残してPRを新しいHEADで開き直す   :CodeDiffReview since   前回のHEADからの変更',
+  ':CodeDiffReview copy-branch | copy-url   リポジトリ名とブランチ / PRのURLをコピー（まとめてレビュー中は全PR分）',
   ':CodeDiffReview status | close',
 }, '\n')
 
@@ -21,7 +22,8 @@ local subcommands = { pick = core.pick, ['pick-toggle'] = core.toggle_pick, ['pi
   list = core.list, refresh = core.refresh, status = core.status, close = core.close,
   reply = core.reply, resolve = core.resolve, resolved = core.toggle_resolved,
   next = function() core.goto_comment(1) end, prev = function() core.goto_comment(-1) end,
-  ['next-pr'] = function() core.goto_pr(1) end, ['prev-pr'] = function() core.goto_pr(-1) end }
+  ['next-pr'] = function() core.goto_pr(1) end, ['prev-pr'] = function() core.goto_pr(-1) end,
+  ['copy-branch'] = function() core.copy 'branch' end, ['copy-url'] = function() core.copy 'url' end }
 
 local function open(argv, attach)
   local first = attach and 2 or 1
@@ -60,7 +62,7 @@ function M.setup(opts)
     desc = 'CodeDiffでGitHub PRをレビュー',
     complete = function(arglead)
       local choices = { 'pick', 'pick-toggle', 'pick-sort', 'attach', 'comment', 'preview', 'edit', 'delete', 'move', 'reload', 'since', 'list', 'refresh', 'submit', 'status', 'close', 'reply', 'resolve', 'resolved', 'next', 'prev', 'next-pr', 'prev-pr',
-        'approve', 'request_changes', '--repo', '--remote' }
+        'copy-branch', 'copy-url', 'approve', 'request_changes', '--repo', '--remote' }
       return vim.tbl_filter(function(item) return vim.startswith(item, arglead) end, choices)
     end,
   })

@@ -136,6 +136,8 @@ local bindings = {
   { 'n', 'list', function() M.list() end, 'コメント一覧' },
   { 'n', 'next_pr', function() M.goto_pr(1) end, '次のPRのタブ' },
   { 'n', 'prev_pr', function() M.goto_pr(-1) end, '前のPRのタブ' },
+  { 'n', 'copy_branch', function() M.copy 'branch' end, 'リポジトリ名とブランチをコピー' },
+  { 'n', 'copy_url', function() M.copy 'url' end, 'PRのURLをコピー' },
   { 'n', 'submit', function() M.submit() end, 'レビュー送信画面' },
 }
 
@@ -322,11 +324,13 @@ local function bind(ctx, tab)
   ctx.group_index = nil
   place(ctx)
   migrate(ctx)
-  if ctx.on_bound then
+  -- CodeDiffのfetch後に切り替え、完了してから次のPRを開く。
+  lsp.update_branch(ctx, function()
+    if sessions[tab] ~= ctx or not ctx.on_bound then return end
     local on_bound = ctx.on_bound
     ctx.on_bound = nil
     on_bound(ctx)
-  end
+  end)
 end
 
 -- ---- PRを開く -----------------------------------------------------------------
@@ -344,7 +348,7 @@ end
 local function format_pr(pr)
   if pr.manual then return '番号を入力…' end
   local author = pr.author and pr.author.login or 'ghost'
-  return string.format('#%d %s%s  (@%s · %s)', pr.number, pr.isDraft and '[Draft] ' or '', pr.title, author, pr.headRefName or '')
+  return string.format('#%d %s%s%s  (@%s · %s)', pr.number, picker_display.review_mark(pr.my_review), pr.isDraft and '[Draft] ' or '', pr.title, author, pr.headRefName or '')
 end
 
 local function sort_prs(items)
@@ -616,7 +620,7 @@ function M.open(number, opts)
       if pr_err then return fail(pr_err) end
       if type(pr) ~= 'table' or type(pr.headRefOid) ~= 'string' then return fail 'PR情報にheadのSHAがありません' end
       local ctx = {
-        repo = repo, number = number, cwd = cwd, head_sha = pr.headRefOid, url = pr.url or '', title = pr.title or '',
+        repo = repo, number = number, cwd = cwd, head_sha = pr.headRefOid, url = pr.url or '', title = pr.title or '', branch = pr.headRefName or '', my_review = pr.my_review,
         drafts = store.load(repo, number), files = {}, threads = {}, generation = 0, mapped = {},
         expanded = config.options.expanded, group = opts.group, group_index = opts.group_index, on_bound = opts.on_bound,
         previous_head = opts.previous_head,
@@ -1103,7 +1107,7 @@ function M.goto_pr(direction)
   local target = ctxs[index]
   if not (target.tab and vim.api.nvim_tabpage_is_valid(target.tab)) then return warn 'PRのタブが閉じられています' end
   vim.api.nvim_set_current_tabpage(target.tab)
-  ui.notify(string.format('PR %d/%d: %s#%d %s', index, #ctxs, target.repo, target.number, target.title or ''))
+  ui.notify(string.format('PR %d/%d: %s#%d %s%s', index, #ctxs, target.repo, target.number, picker_display.review_mark(target.my_review), target.title or ''))
 end
 
 -- ---- レビュー送信 -------------------------------------------------------------
@@ -1150,6 +1154,8 @@ end
 
 local events = { comment = 'COMMENT', approve = 'APPROVE', request_changes = 'REQUEST_CHANGES' }
 local event_labels = { COMMENT = 'コメント', APPROVE = '承認', REQUEST_CHANGES = '変更を依頼' }
+local review_states = { COMMENT = 'COMMENTED', APPROVE = 'APPROVED', REQUEST_CHANGES = 'CHANGES_REQUESTED' }
+local review_labels = { COMMENTED = 'コメント済み', APPROVED = '承認済み', CHANGES_REQUESTED = '変更を依頼済み' }
 
 local function label(ctx) return ctx.repo .. '#' .. ctx.number end
 
@@ -1222,6 +1228,7 @@ local function send(targets, grouped, group)
         return finish(i - 1)
       end
       ctx.drafts = vim.tbl_filter(function(draft) return not vim.deep_equal(draft, review.submitted[draft.id]) end, ctx.drafts)
+      ctx.my_review = github.review_state(ctx.my_review, review_states[review.payload.event])
       save(ctx)
       step(i + 1)
     end)
@@ -1278,14 +1285,20 @@ function M.submit(kind)
       ctxs = retry
     end
   end
-  local reviews, lines, titles, excluded, stale = {}, {}, {}, {}, 0
+  local reviews, lines, titles, excluded, approved, stale = {}, {}, {}, {}, {}, 0
   for _, member in ipairs(ctxs) do
     if member.submitting then return warn 'レビューを送信中です' end
     local payload, problem, included, stale_count = build_payload(member, event)
+    -- まとめて承認するとき、承認済みのPRへ承認を重ねない。下書きがあればコメントとして送る。
+    local again = payload and grouped and event == 'APPROVE' and member.my_review == 'APPROVED'
+    if again then
+      payload.event = 'COMMENT'
+      approved[#approved + 1] = label(member) .. (#payload.comments > 0 and '（下書きはコメントとして送信）' or '')
+    end
     if not payload and not grouped then return warn(problem) end
     if not payload then
       excluded[#excluded + 1] = label(member) .. ': ' .. problem
-    else
+    elseif not (again and #payload.comments == 0) then
       stale = stale + stale_count
       local submitted = {}
       for _, draft in ipairs(included) do submitted[draft.id] = vim.deepcopy(draft) end
@@ -1296,6 +1309,7 @@ function M.submit(kind)
     end
   end
   if #excluded > 0 then warn('送信できないPRを除外しました\n' .. table.concat(excluded, '\n')) end
+  if #approved > 0 then ui.notify('承認済みのPRには承認を送りません: ' .. table.concat(approved, ', ')) end
   if #reviews == 0 then return end
   local split = #reviews > 1
   local context = table.concat(titles, '\n') .. '\n' .. table.concat(lines, '\n')
@@ -1347,10 +1361,25 @@ function M.status()
   for _, member in ipairs(ctx.group and ctx.group.ctxs or { ctx }) do
     local open = #vim.tbl_filter(function(t) return not t.resolved end, member.threads)
     local stale = #vim.tbl_filter(function(c) return c.stale or c.head_sha ~= member.head_sha end, member.drafts)
-    lines[#lines + 1] = string.format('%s%s | 下書き%d件（要確認%d件）| スレッド%d件（未解決%d件）| %s',
-      ctx.group and (member == ctx and '▶ ' or '  ') or '', label(member), #member.drafts, stale, #member.threads, open, member.url)
+    lines[#lines + 1] = string.format('%s%s | 下書き%d件（要確認%d件）| スレッド%d件（未解決%d件）| %s%s | %s',
+      ctx.group and (member == ctx and '▶ ' or '  ') or '', label(member), #member.drafts, stale, #member.threads, open,
+      picker_display.review_mark(member.my_review), review_labels[member.my_review] or '未レビュー', member.url)
   end
   ui.notify(table.concat(lines, '\n'))
+end
+
+local copy_formats = {
+  branch = function(member) return member.repo .. ' ' .. member.branch end,
+  url = function(member) return member.url end,
+}
+
+-- まとめてレビュー中なら全PR分（開いた順に1行ずつ）をクリップボードへコピーする。
+function M.copy(kind)
+  local ctx = current()
+  if not ctx then return end
+  local text = table.concat(vim.tbl_map(copy_formats[kind], ctx.group and ctx.group.ctxs or { ctx }), '\n')
+  vim.fn.setreg('+', text)
+  ui.notify('コピーしました:\n' .. text)
 end
 
 -- 開いている途中のPRがあれば先に中止する（まとめて開く途中は、開いたPRのタブにいることが多い）。
